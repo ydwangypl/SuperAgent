@@ -87,7 +87,6 @@ class SuperAgentCLI(cmd.Cmd):
 
     def do_doctor(self, args: str):
         """环境自检 - doctor
-        
         检查 Git 环境、配置文件、目录权限、记忆系统及依赖项
         """
         print("\n" + "="*60)
@@ -96,12 +95,10 @@ class SuperAgentCLI(cmd.Cmd):
         
         # 1. 检查 Python 版本与核心依赖
         py_version = sys.version_info
-        if py_version.major >= 3 and py_version.minor >= 10:
-            print("✅ Python 版本: 满足要求 (3.10+)")
-        else:
-            print(f"❌ Python 版本: {py_version.major}.{py_version.minor} (建议 3.10+)")
+        status_py = "✅" if py_version.major >= 3 and py_version.minor >= 10 else "❌"
+        print(f"{status_py} Python 版本: {py_version.major}.{py_version.minor}.{py_version.micro} (要求 3.10+)")
 
-        dependencies = ["aiofiles", "pytest", "yaml", "jinja2"]
+        dependencies = ["aiofiles", "pytest", "yaml", "jinja2", "pydantic"]
         missing_deps = []
         for dep in dependencies:
             try:
@@ -109,25 +106,20 @@ class SuperAgentCLI(cmd.Cmd):
             except ImportError:
                 missing_deps.append(dep)
         
-        if not missing_deps:
-            print("✅ 核心依赖: 已全部安装")
-        else:
-            print(f"❌ 核心依赖: 缺少 {', '.join(missing_deps)}")
+        status_deps = "✅" if not missing_deps else "❌"
+        deps_msg = "已全部安装" if not missing_deps else f"缺少: {', '.join(missing_deps)}"
+        print(f"{status_deps} 核心依赖: {deps_msg}")
 
         # 2. 检查 Git 与 Worktree 支持
         import subprocess
-        git_found = False
-        is_git_repo = False
         try:
             git_ver = subprocess.check_output(["git", "--version"], stderr=subprocess.STDOUT).decode().strip()
             print(f"✅ Git 环境: {git_ver}")
-            git_found = True
             
             # 检查是否在 git 仓库中
             result = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], 
                                    capture_output=True, text=True)
             if result.returncode == 0 and "true" in result.stdout.lower():
-                is_git_repo = True
                 print("✅ Git 仓库: 已检测到有效仓库")
             else:
                 print("⚠️  Git 仓库: 当前目录不是 Git 仓库 (Worktree 功能将受限)")
@@ -136,34 +128,37 @@ class SuperAgentCLI(cmd.Cmd):
 
         # 3. 检查目录权限与记忆系统
         root = Path(self.project_root)
-        if os.access(root, os.W_OK):
-            print(f"✅ 项目根目录权限: {root} (可写)")
-        else:
-            print(f"❌ 项目根目录权限: {root} (不可写)")
+        status_root = "✅" if os.access(root, os.W_OK) else "❌"
+        print(f"{status_root} 项目根目录: {root} ({'可写' if os.access(root, os.W_OK) else '不可写'})")
 
         memory_dir = root / ".superagent" / "memory"
         if memory_dir.exists():
-            if os.access(memory_dir, os.W_OK):
-                print(f"✅ 记忆系统目录: {memory_dir} (正常)")
-            else:
-                print(f"❌ 记忆系统目录: {memory_dir} (不可写)")
+            status_mem = "✅" if os.access(memory_dir, os.W_OK) else "❌"
+            print(f"{status_mem} 记忆系统目录: {memory_dir} ({'正常' if os.access(memory_dir, os.W_OK) else '不可写'})")
         else:
-            print(f"⚠️  记忆系统目录: 未创建 (将在首次启动时初始化)")
+            print("⚠️  记忆系统目录: 未创建 (将在首次启动时初始化)")
 
         # 4. 检查配置文件
         config_path = root / ".superagent" / "config.json"
         if config_path.exists():
             print(f"✅ 配置文件: 已找到 {config_path}")
         else:
-            print(f"⚠️  配置文件: 未找到, 将使用默认配置")
+            print(f"⚠️  配置文件: 未找到 (提示: 输入 'config init' 可创建默认配置)")
 
         # 5. 检查 LLM 环境变量
-        api_keys = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "DEEPSEEK_API_KEY"]
-        found_keys = [k for k in api_keys if os.environ.get(k)]
+        api_keys = {
+            "OPENAI_API_KEY": "OpenAI",
+            "ANTHROPIC_API_KEY": "Anthropic",
+            "GOOGLE_API_KEY": "Google Gemini",
+            "DEEPSEEK_API_KEY": "DeepSeek"
+        }
+        found_keys = [label for key, label in api_keys.items() if os.environ.get(key)]
+        
         if found_keys:
             print(f"✅ LLM 配置: 已检测到 {', '.join(found_keys)}")
         else:
             print("⚠️  LLM 配置: 未检测到 API 密钥环境变量")
+            print("   (提示: 请在系统环境变量或 .env 文件中设置 OPENAI_API_KEY 等)")
 
         print("\n诊断完成！" + "="*50)
 

@@ -32,11 +32,12 @@ ENV/
 *.swo
 
 # Project specific
-.superagent/memory/
-.superagent/logs/
+.superagent/
 *.log
 config.json
 .env
+test_reports/
+*.md.tmp
 
 # Tests
 .pytest_cache/
