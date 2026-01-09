@@ -1,0 +1,36 @@
+[coveragerc]
+# Coverage.py配置文件
+
+[run]
+# 要分析的源代码目录
+source =
+    .
+# 忽略的目录
+omit =
+    */tests/*
+    */test_*.py
+    */__pycache__/*
+    */site-packages/*
+    */.super-agent/*
+    .super-agent/*
+
+[report]
+# 报告选项
+precision = 2
+show_missing = True
+skip_covered = False
+
+# 排除的行
+exclude_lines =
+    # 标准排除
+    pragma: no cover
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:
+    @abstract
+
+[html]
+# HTML报告目录
+directory = htmlcov
