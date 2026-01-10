@@ -44,7 +44,79 @@
 
 ---
 
-## 🏗️ 5层架构
+## 🏗️ 多层可扩展架构
+
+### ✨ v3.0 重构亮点 (2026-01-10)
+
+**架构升级**: 引入核心抽象层,支持多领域扩展,完全向后兼容!
+
+```python
+# 新架构 - 统一接口,多领域支持
+from adapters import UnifiedAdapter
+from pathlib import Path
+
+adapter = UnifiedAdapter(Path("/project"))
+
+# ✅ 代码生成和审查 (原有功能)
+result = await adapter.execute_and_review(
+    task_type="code",
+    task_data={"description": "创建用户API"}
+)
+
+# ✅ 内容生成和审查 (新功能)
+result = await adapter.execute_and_review(
+    task_type="article",
+    task_data={
+        "description": "人工智能发展趋势",
+        "context": {"tone": "professional", "length": 800}
+    }
+)
+```
+
+**核心改进**:
+- ✅ 新增核心抽象层 (`core/`) - Executor/Reviewer接口
+- ✅ 新增适配器层 (`adapters/`) - 桥接新旧系统
+- ✅ 新增扩展层 (`extensions/`) - 支持多领域
+- ✅ 100%向后兼容 - 现有代码无需修改
+- ✅ 符合所有SOLID原则
+- ✅ 80个测试,97%+覆盖率
+
+详见: [重构进度总结](REFACTOR_PROGRESS_SUMMARY.md) | [使用指南](docs/USAGE_GUIDE.md)
+
+---
+
+### 第0层: 核心抽象层 (Core Abstraction Layer) ✨ 新增
+
+**文件**: `core/`
+
+**职责**: 定义Executor和Reviewer抽象接口
+
+```python
+from core.executor import Executor, Task, ExecutionResult
+from core.reviewer import Reviewer, Artifact, ReviewResult
+
+# 任何执行器都需要实现Executor接口
+class MyExecutor(Executor):
+    def execute(self, task: Task) -> ExecutionResult:
+        # 实现执行逻辑
+        pass
+
+# 任何审查器都需要实现Reviewer接口
+class MyReviewer(Reviewer):
+    def review(self, artifact: Artifact) -> ReviewResult:
+        # 实现审查逻辑
+        pass
+```
+
+**核心抽象**:
+- `Executor`: 任务执行器抽象
+- `Reviewer`: 产物审查器抽象
+- `Task`: 统一任务模型
+- `ExecutionResult`: 统一执行结果
+- `Artifact`: 统一产物模型
+- `ReviewResult`: 统一审查结果
+
+---
 
 ### 第1层: 对话层 (Conversation Layer)
 
@@ -59,6 +131,8 @@ manager = ConversationManager()
 intent = await manager.recognize_intent("开发一个用户管理API")
 # 返回: Intent(backend_api_development, confidence=0.95)
 ```
+
+---
 
 ### 第2层: 规划层 (Planning Layer)
 
@@ -94,6 +168,8 @@ plan = await planner.generate_plan("开发一个博客系统")
 12. data-migration - 数据迁移
 13. infra-setup - 基础设施
 
+---
+
 ### 第3层: 编排层 (Orchestration Layer)
 
 **文件**: `orchestration/`
@@ -121,28 +197,23 @@ result = await orchestrator.execute_plan(plan)
 - ✅ 智能资源管理
 - ✅ 快速失败机制
 
+---
+
 ### 第4层: 执行层 (Execution Layer)
 
-**文件**: `execution/`
+**文件**: `execution/` + `extensions/` ✨ 扩展
 
-**职责**: 实现Agent逻辑,返回需求/框架
+**职责**: 实现Agent逻辑,支持多领域执行器
+
+#### 原有执行器 (execution/)
 
 ```python
 from execution import CodingAgent
 
 agent = CodingAgent("coding-agent-1")
-
 result = await agent.execute(context, {
     "description": "开发用户管理API"
 })
-
-# Agent返回需求文档(不是代码!)
-# result.artifacts = {
-#     "requirements": "REQUIREMENTS.md",
-#     "architecture": "ARCHITECTURE.md"
-# }
-#
-# Claude Code根据需求生成实际代码
 ```
 
 **4种核心Agent**:
@@ -151,14 +222,36 @@ result = await agent.execute(context, {
 - `DocumentationAgent`: 文档Agent - 返回文档需求
 - `RefactoringAgent`: 重构Agent - 返回重构建议
 
-### 第5层: 审查层 (Review Layer)
-
-**文件**: `review/`
-
-**职责**: 自动代码审查,Ralph Wiggum循环
+#### 新增扩展执行器 (extensions/) ✨
 
 ```python
-from review import CodeReviewer, RalphWiggumLoop
+from extensions.writing_executor import WritingExecutor
+from core.executor import Task
+
+executor = WritingExecutor()
+result = executor.execute(Task(
+    task_type="article",
+    description="人工智能发展趋势",
+    context={"tone": "professional", "length": 800}
+))
+```
+
+**扩展执行器**:
+- `WritingExecutor`: 写作执行器 - 生成文章、博客、文档
+- 未来可添加: `DesignExecutor`, `VideoExecutor`等
+
+---
+
+### 第5层: 审查层 (Review Layer)
+
+**文件**: `review/` + `extensions/` ✨ 扩展
+
+**职责**: 自动代码审查,Ralph Wiggum循环,多领域审查
+
+#### 原有审查器 (review/)
+
+```python
+from review import CodeReviewer
 
 reviewer = CodeReviewer()
 result = reviewer.review_code(
@@ -166,10 +259,6 @@ result = reviewer.review_code(
     files=["user/api.py"],
     code_content={"user/api.py": "..."}
 )
-
-# 质量评分: 85/100
-# 发现问题: 3个
-# 改进建议: [...]
 ```
 
 **审查维度**:
@@ -177,6 +266,63 @@ result = reviewer.review_code(
 - 安全检查 (SQL注入、XSS等)
 - 性能检查 (算法复杂度)
 - 最佳实践 (SOLID原则)
+
+#### 新增扩展审查器 (extensions/) ✨
+
+```python
+from extensions.content_reviewer import ContentReviewer
+from core.reviewer import Artifact
+
+reviewer = ContentReviewer()
+result = reviewer.review(Artifact(
+    artifact_type="article",
+    content="文章内容..."
+))
+```
+
+**扩展审查器**:
+- `ContentReviewer`: 内容审查器 - 5个质量指标
+  - 长度审查 (15%)
+  - 可读性审查 (25%)
+  - 结构审查 (20%)
+  - 语法审查 (20%)
+  - SEO审查 (20%)
+- 未来可添加: `DesignReviewer`, `VideoReviewer`等
+
+---
+
+### 适配器层 (Adapter Layer) ✨ 新增
+
+**文件**: `adapters/`
+
+**职责**: 桥接核心抽象和现有系统
+
+```python
+from adapters import UnifiedAdapter
+from pathlib import Path
+
+# 统一接口 - 自动选择执行器和审查器
+adapter = UnifiedAdapter(Path("/project"))
+
+# 最常用: 执行并审查
+result = await adapter.execute_and_review(
+    task_type="code",
+    task_data={"description": "创建用户API"},
+    review_config={"enable_iterative": True}
+)
+
+# 返回:
+{
+    "execution": {...},  # 执行结果
+    "review": {...},     # 审查结果
+    "summary": "..."      # 综合总结
+}
+```
+
+**适配器组件**:
+- `AgentExecutor`: Agent系统 → Executor接口
+- `CodeReviewerAdapter`: CodeReviewer → Reviewer接口
+- `UnifiedAdapter`: 高级统一接口 (推荐使用)
 
 ---
 
