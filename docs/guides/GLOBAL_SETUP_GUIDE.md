@@ -1,14 +1,17 @@
-# SuperAgent 全局配置指南
+# SuperAgent v3.0 全局配置指南
 
-**在任何项目中使用 SuperAgent**
+**在任何项目中使用 SuperAgent v3.0**
 
 ---
 
 ## 🎯 您的需求
 
 - ✅ 不一定要在 SuperAgent 项目目录下开发
-- ✅ 可以在任何项目中使用 SuperAgent
+- ✅ 可以在任何项目中使用 SuperAgent v3.0
 - ✅ 通过环境变量配置 SuperAgent 路径
+- ✅ 使用新的统一接口 (UnifiedAdapter)
+
+**v3.0 新架构**: 核心抽象层 + 适配器层 + 扩展层
 
 ---
 
@@ -26,7 +29,7 @@ $env:SUPERAGENT_ROOT = "E:\SuperAgent"
 [System.Environment]::SetEnvironmentVariable('SUPERAGENT_ROOT', 'E:\SuperAgent', 'User')
 
 # 3. 验证配置
-python -c "from orchestration import Orchestrator; print('✅ SuperAgent 导入成功!')"
+python -c "from adapters import UnifiedAdapter; print('✅ SuperAgent v3.0 导入成功!')"
 ```
 
 #### Windows (CMD)
@@ -36,7 +39,7 @@ REM 临时设置
 set SUPERAGENT_ROOT=E:\SuperAgent
 
 REM 验证配置
-python -c "from orchestration import Orchestrator; print('Success!')"
+python -c "from adapters import UnifiedAdapter; print('Success!')"
 ```
 
 #### Linux/macOS (bash/zsh)
@@ -52,29 +55,12 @@ export SUPERAGENT_ROOT="/path/to/SuperAgent"
 source ~/.bashrc  # 或 source ~/.zshrc
 
 # 4. 验证配置
-python -c "from orchestration import Orchestrator; print('✅ Success!')"
+python -c "from adapters import UnifiedAdapter; print('✅ Success!')"
 ```
 
 ---
 
-### 方式 2: 使用自动设置脚本
-
-我已经为您创建了一个自动设置脚本:
-
-```bash
-# 运行设置脚本
-python e:\SuperAgent\setup_superagent.py
-```
-
-这个脚本会:
-- ✅ 自动检测 SuperAgent 目录
-- ✅ 设置环境变量
-- ✅ 验证安装
-- ✅ 提供使用说明
-
----
-
-### 方式 3: 在代码中动态配置
+### 方式 2: 在代码中动态配置
 
 在任何项目的 Python 脚本中:
 
@@ -88,21 +74,40 @@ from pathlib import Path
 superagent_root = Path("E:/SuperAgent")
 sys.path.insert(0, str(superagent_root))
 
-# 现在可以导入 SuperAgent
-from orchestration import Orchestrator
-from planning import ProjectPlanner
+# ✅ v3.0 新方式: 使用统一接口
+from adapters import UnifiedAdapter
+from core.executor import Task
 
-# 使用 SuperAgent
-orchestrator = Orchestrator(Path("."))
-planner = ProjectPlanner()
+async def main():
+    # 初始化适配器
+    adapter = UnifiedAdapter(Path("/your/project"))
 
-plan = await planner.create_plan("开发用户登录功能")
-result = await orchestrator.execute_plan(plan)
+    # 执行任务并自动审查
+    result = await adapter.execute_and_review(
+        task_type="code",
+        task_data={
+            "description": "开发用户登录功能",
+            "context": {
+                "language": "python",
+                "framework": "FastAPI"
+            }
+        },
+        review_config={
+            "enable_iterative": True  # 启用Ralph Wiggum循环改进
+        }
+    )
+
+    # 查看结果
+    print(result['summary'])
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
 ```
 
 ---
 
-### 方式 4: 创建便捷导入模块
+### 方式 3: 创建便捷导入模块
 
 在任何项目中创建一个便捷导入文件:
 
@@ -119,17 +124,23 @@ SUPERAGENT_ROOT = Path("E:/SuperAgent")
 if str(SUPERAGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(SUPERAGENT_ROOT))
 
-# 导入并重新导出核心模块
-from orchestration import Orchestrator
-from planning import ProjectPlanner
-from config import load_config
-from memory import MemoryManager
+# ✅ v3.0 新架构: 导入核心模块
+from adapters import UnifiedAdapter
+from core.executor import Executor, Task, ExecutionResult
+from core.reviewer import Reviewer, Artifact, ReviewResult
+from extensions.writing_executor import WritingExecutor
+from extensions.content_reviewer import ContentReviewer
 
 __all__ = [
-    'Orchestrator',
-    'ProjectPlanner',
-    'load_config',
-    'MemoryManager'
+    'UnifiedAdapter',
+    'Executor',
+    'Reviewer',
+    'Task',
+    'ExecutionResult',
+    'Artifact',
+    'ReviewResult',
+    'WritingExecutor',
+    'ContentReviewer'
 ]
 ```
 
@@ -138,17 +149,27 @@ __all__ = [
 ```python
 # your_project/app.py
 
-from superagent_import import Orchestrator, ProjectPlanner
+from superagent_import import UnifiedAdapter
+from pathlib import Path
+import asyncio
 
-# 直接使用,无需配置路径
-orchestrator = Orchestrator(Path("."))
+async def main():
+    # 直接使用,无需配置路径
+    adapter = UnifiedAdapter(Path("."))
+
+    result = await adapter.execute_and_review(
+        task_type="code",
+        task_data={"description": "创建用户API"}
+    )
+
+asyncio.run(main())
 ```
 
 ---
 
 ## 💡 在 Claude Code 中使用
 
-### 在任何项目中使用 SA
+### 在任何项目中使用 SA v3.0
 
 **配置好环境变量后**,您可以在任何项目中使用:
 
@@ -156,39 +177,46 @@ orchestrator = Orchestrator(Path("."))
 您: 使用 SA 开发一个用户登录功能
 
 我 (Claude Code):
-  # 自动导入 SuperAgent
-  from orchestration import Orchestrator
+  # ✅ v3.0 新方式: 使用统一适配器
+  from adapters import UnifiedAdapter
+  from pathlib import Path
 
-  # 在您的项目中使用
-  orchestrator = Orchestrator(Path("/your/project/path"))
+  adapter = UnifiedAdapter(Path("/your/project"))
 
-  # 生成计划并执行
-  plan = await planner.create_plan("...")
-  result = await orchestrator.execute_plan(plan)
+  result = await adapter.execute_and_review(
+      task_type="code",
+      task_data={
+          "description": "开发用户登录功能",
+          "requirements": [
+              "用户注册",
+              "用户登录",
+              "JWT认证",
+              "密码加密"
+          ]
+      },
+      review_config={"enable_iterative": True}
+  )
+
+  # 查看结果
+  print(result['summary'])
 ```
+
+**v3.0 优势**:
+- ✅ 更简洁的API (一行代码完成执行+审查)
+- ✅ 自动集成Ralph Wiggum循环改进
+- ✅ 支持多领域 (代码 + 内容 + 未来扩展)
+- ✅ 100%向后兼容旧代码
 
 ---
 
 ## 📝 实际使用示例
 
-### 示例 1: 在其他项目中使用
+### 示例 1: 开发用户登录功能
 
 假设您有一个项目在 `D:\MyProjects\blog`:
 
-```bash
-# 1. 进入项目目录
-cd D:\MyProjects\blog
-
-# 2. 设置环境变量 (如果还没设置)
-# Windows PowerShell
-$env:SUPERAGENT_ROOT = "E:\SuperAgent"
-
-# 3. 创建 Python 脚本
-# develop.py
-```
-
 ```python
-# D:\MyProjects\blog\develop.py
+# D:\MyProjects\blog\develop_login.py
 
 import sys
 from pathlib import Path
@@ -198,78 +226,144 @@ superagent_root = Path("E:/SuperAgent")
 if str(superagent_root) not in sys.path:
     sys.path.insert(0, str(superagent_root))
 
-# 导入 SuperAgent
-from orchestration import Orchestrator
-from planning import ProjectPlanner
+# ✅ 导入 v3.0 统一接口
+from adapters import UnifiedAdapter
 import asyncio
 
 async def main():
-    # 初始化 (在当前项目中)
-    orchestrator = Orchestrator(Path("."))  # 当前项目目录
-    planner = ProjectPlanner()
+    # 初始化适配器
+    adapter = UnifiedAdapter(Path("."))  # 当前项目目录
 
-    # 开发功能
-    plan = await planner.create_plan("开发博客系统")
-    result = await orchestrator.execute_plan(plan)
+    # 开发用户登录功能
+    result = await adapter.execute_and_review(
+        task_type="code",
+        task_data={
+            "description": "开发用户登录功能",
+            "requirements": [
+                "用户注册 (POST /api/register)",
+                "用户登录 (POST /api/login)",
+                "JWT Token生成",
+                "密码哈希存储 (bcrypt)",
+                "登录状态验证"
+            ],
+            "context": {
+                "language": "python",
+                "framework": "FastAPI",
+                "database": "PostgreSQL",
+                "security": ["JWT", "bcrypt"]
+            }
+        },
+        review_config={
+            "enable_iterative": True,
+            "max_iterations": 3,
+            "target_score": 85.0
+        }
+    )
 
-    print(f"完成: {result.completed_tasks}/{result.total_tasks}")
+    # 输出结果
+    print(f"✅ 执行状态: {result['execution']['success']}")
+    print(f"📊 审查评分: {result['review']['overall_score']:.1f}")
+    print(f"\n📝 总结:\n{result['summary']}")
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-### 示例 2: 配置后在任何地方使用
+**输出示例**:
+```
+✅ 执行状态: True
+📊 审查评分: 87.5
 
-**配置好环境变量后**,创建全局配置文件:
+📝 总结:
+✅ 任务执行成功
+   执行时间: 2.50秒
+   生成产物: 5个
 
-```python
-# ~/.superagent_config.py (或 C:\Users\YourName\.superagent_config.py)
+✅ 代码审查通过 (评分: 87.5)
+   发现问题: 1个
+   - 重要: 建议添加登录失败次数限制
 
-import sys
-from pathlib import Path
-import os
-
-# 从环境变量读取
-SUPERAGENT_ROOT = Path(os.environ.get("SUPERAGENT_ROOT", "E:/SuperAgent"))
-
-# 添加到路径
-if str(SUPERAGENT_ROOT) not in sys.path:
-    sys.path.insert(0, str(SUPERAGENT_ROOT))
-
-# 导入核心模块
-from orchestration import Orchestrator
-from planning import ProjectPlanner
-from config import load_config
-from memory import MemoryManager
-
-# 提供便捷函数
-def create_orchestrator(project_path="."):
-    """创建 Orchestrator 实例"""
-    return Orchestrator(Path(project_path))
-
-def create_planner():
-    """创建 Planner 实例"""
-    return ProjectPlanner()
+生成文件:
+- models/user.py (用户模型)
+- api/auth.py (认证API)
+- services/auth_service.py (认证服务)
+- utils/jwt.py (JWT工具)
+- tests/test_auth.py (测试文件)
 ```
 
-然后在任何项目中:
+### 示例 2: 批量开发多个功能
 
 ```python
-# your_project/app.py
+# D:\MyProjects\blog\develop_features.py
 
-# 导入全局配置
-import sys
+from adapters import UnifiedAdapter
 from pathlib import Path
+import asyncio
 
-# 加载全局配置
-config_path = Path.home() / ".superagent_config.py"
-if config_path.exists():
-    with open(config_path) as f:
-        exec(f.read())
+async def develop_features():
+    adapter = UnifiedAdapter(Path("."))
 
-# 直接使用
-orchestrator = create_orchestrator(".")
-planner = create_planner()
+    features = [
+        ("用户管理", "创建用户CRUD API"),
+        ("文章管理", "创建文章发布和管理功能"),
+        ("评论系统", "实现文章评论功能")
+    ]
+
+    for feature_name, description in features:
+        print(f"\n{'='*50}")
+        print(f"开始开发: {feature_name}")
+        print(f"{'='*50}\n")
+
+        result = await adapter.execute_and_review(
+            task_type="code",
+            task_data={"description": description},
+            review_config={"enable_iterative": True}
+        )
+
+        print(f"✅ {feature_name} - 完成!")
+        print(f"评分: {result['review']['overall_score']:.1f}\n")
+
+if __name__ == "__main__":
+    asyncio.run(develop_features())
+```
+
+### 示例 3: 内容生成 (新功能 ✨)
+
+```python
+# 使用 SuperAgent v3.0 生成技术文章
+
+from adapters import UnifiedAdapter
+from pathlib import Path
+import asyncio
+
+async def main():
+    adapter = UnifiedAdapter(Path("."))
+
+    # 生成技术文章
+    result = await adapter.execute_and_review(
+        task_type="article",
+        task_data={
+            "description": "如何使用FastAPI构建RESTful API",
+            "context": {
+                "tone": "professional",
+                "length": 1500,
+                "audience": "Python开发者",
+                "keywords": ["FastAPI", "RESTful", "Python", "API"]
+            }
+        }
+    )
+
+    # 查看生成的内容
+    if result['execution']['success']:
+        content = result['execution']['content']
+        print(content)
+
+        # 内容质量评分
+        review = result['review']
+        print(f"\n内容质量: {review['overall_score']:.1f}/100")
+        print(f"是否通过: {'✅' if review['approved'] else '❌'}")
+
+asyncio.run(main())
 ```
 
 ---
@@ -277,34 +371,6 @@ planner = create_planner()
 ## 🔧 验证配置
 
 ### 检查配置是否成功
-
-```bash
-# 运行验证脚本
-python e:\SuperAgent\setup_superagent.py
-```
-
-预期输出:
-```
-============================================================
-SuperAgent 全局设置向导
-============================================================
-
-检测到 SuperAgent 目录: E:\SuperAgent
-
-验证安装...
-✅ SuperAgent 安装验证成功!
-   SuperAgent 根目录: E:\SuperAgent
-   Python 版本: 3.11.0
-
-============================================================
-🎉 设置完成!
-============================================================
-
-您现在可以在任何项目中使用 SuperAgent:
-...
-```
-
-### 手动验证
 
 ```python
 # 在任何目录下运行
@@ -315,38 +381,81 @@ from pathlib import Path
 # 设置路径
 sys.path.insert(0, 'E:/SuperAgent')
 
-# 测试导入
-from orchestration import Orchestrator
-print('✅ SuperAgent 导入成功!')
+# ✅ 测试 v3.0 新架构导入
+from adapters import UnifiedAdapter
+from core.executor import Executor
+from core.reviewer import Reviewer
+from extensions.writing_executor import WritingExecutor
+from extensions.content_reviewer import ContentReviewer
+
+print('✅ SuperAgent v3.0 导入成功!')
+print('✅ 核心抽象层可用')
+print('✅ 适配器层可用')
+print('✅ 扩展层可用')
 "
+```
+
+**预期输出**:
+```
+✅ SuperAgent v3.0 导入成功!
+✅ 核心抽象层可用
+✅ 适配器层可用
+✅ 扩展层可用
 ```
 
 ---
 
 ## 🎯 最佳实践
 
-### ✅ 推荐
+### ✅ 推荐 (v3.0)
 
-1. **设置环境变量** (一次配置,全局使用)
-2. **创建全局配置文件** (~/.superagent_config.py)
-3. **在每个项目中创建本地配置** (superagent_import.py)
+1. **使用 UnifiedAdapter** - 简洁的统一接口
+2. **启用循环改进** - 重要任务使用 `enable_iterative=True`
+3. **提供详细上下文** - 提高生成质量
+4. **设置环境变量** - 一次配置,全局使用
+5. **查看快速参考** - [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
 
 ### ❌ 避免
 
-1. ❌ 在每个脚本中硬编码路径
-2. ❌ 复制 SuperAgent 代码到每个项目
-3. ❌ 修改 SuperAgent 源码以适应特定项目
+1. ❌ 直接使用 Orchestrator (除非需要高级功能)
+2. ❌ 忽略 review_config (总是启用代码审查)
+3. ❌ 不提供 context (降低生成质量)
+4. ❌ 硬编码路径 (使用环境变量)
 
 ---
 
-## 📊 配置对比
+## 📊 v2.0 vs v3.0 对比
 
-| 方式 | 优点 | 缺点 | 推荐度 |
-|------|------|------|--------|
-| 环境变量 | 一次配置,全局使用 | 需要系统设置 | ⭐⭐⭐⭐⭐ |
-| 自动设置脚本 | 简单快速 | 需要运行脚本 | ⭐⭐⭐⭐ |
-| 代码中动态配置 | 灵活 | 每个脚本都要写 | ⭐⭐⭐ |
-| 全局配置文件 | 便捷导入 | 需要维护文件 | ⭐⭐⭐⭐ |
+| 特性 | v2.0 (旧) | v3.0 (新) |
+|------|-----------|-----------|
+| **导入方式** | `from orchestration import Orchestrator` | `from adapters import UnifiedAdapter` |
+| **代码行数** | ~10行 | ~3行 |
+| **自动审查** | 需要手动调用 | 自动集成 |
+| **循环改进** | 手动配置 | 一行启用 |
+| **多领域支持** | ❌ 仅代码 | ✅ 代码+内容+扩展 |
+| **向后兼容** | N/A | ✅ 100% |
+
+**v3.0 示例**:
+```python
+# ✅ v3.0 - 简洁!
+adapter = UnifiedAdapter(project_path)
+result = await adapter.execute_and_review(
+    task_type="code",
+    task_data={"description": "..."},
+    review_config={"enable_iterative": True}
+)
+```
+
+**v2.0 示例**:
+```python
+# ❌ v2.0 - 复杂
+orchestrator = Orchestrator(project_path)
+planner = ProjectPlanner()
+plan = await planner.create_plan("...")
+result = await orchestrator.execute_plan(plan)
+reviewer = CodeReviewer()
+review = reviewer.review_code(...)
+```
 
 ---
 
@@ -360,8 +469,8 @@ print('✅ SuperAgent 导入成功!')
 
 # Step 2: 重启 PowerShell
 
-# Step 3: 验证
-python -c "from orchestration import Orchestrator; print('✅ Success!')"
+# Step 3: 验证 v3.0
+python -c "from adapters import UnifiedAdapter; print('✅ v3.0 Ready!')"
 ```
 
 ### Linux/macOS 用户
@@ -373,8 +482,8 @@ echo 'export SUPERAGENT_ROOT="/path/to/SuperAgent"' >> ~/.bashrc
 # Step 2: 重新加载
 source ~/.bashrc
 
-# Step 3: 验证
-python -c "from orchestration import Orchestrator; print('✅ Success!')"
+# Step 3: 验证 v3.0
+python -c "from adapters import UnifiedAdapter; print('✅ v3.0 Ready!')"
 ```
 
 ---
@@ -387,23 +496,52 @@ python -c "from orchestration import Orchestrator; print('✅ Success!')"
 您: 使用 SA 开发一个博客系统
 
 我 (Claude Code):
-  # 自动导入 SuperAgent (从环境变量)
-  from orchestration import Orchestrator
+  # ✅ v3.0 新架构
+  from adapters import UnifiedAdapter
+  from pathlib import Path
 
-  # 在您的项目中使用
-  orchestrator = Orchestrator(Path("/your/project"))
+  adapter = UnifiedAdapter(Path("/your/project"))
 
-  # 继续正常流程...
+  result = await adapter.execute_and_review(
+      task_type="code",
+      task_data={
+          "description": "开发博客系统",
+          "requirements": [
+              "文章发布",
+              "文章编辑",
+              "评论系统",
+              "用户管理"
+          ]
+      },
+      review_config={"enable_iterative": True}
+  )
+
+  print(result['summary'])
 ```
+
+**就这么简单!** 🎉
 
 ---
 
 ## 📚 相关文件
 
-- [setup_superagent.py](e:\SuperAgent\setup_superagent.py) - 自动设置脚本
-- [HOW_TO_USE_CORRECT.md](e:\SuperAgent\HOW_TO_USE_CORRECT.md) - 使用指南
-- [QUICK_REFERENCE.md](e:\SuperAgent\QUICK_REFERENCE.md) - 快速参考
+- [QUICK_REFERENCE.md](../../QUICK_REFERENCE.md) - v3.0 完整快速参考
+- [COMMANDS_CHEATSHEET.md](../../COMMANDS_CHEATSHEET.md) - 命令行速查
+- [docs/USAGE_GUIDE.md](../USAGE_GUIDE.md) - 完整使用指南
+- [docs/ARCHITECTURE_COMPARISON.md](../ARCHITECTURE_COMPARISON.md) - 架构对比
 
 ---
 
-**总结**: 配置一次,在任何项目中使用 SuperAgent! 🎉
+## 🎓 学习路径
+
+1. **新手上路**: [QUICK_REFERENCE.md](../../QUICK_REFERENCE.md)
+2. **深入学习**: [docs/USAGE_GUIDE.md](../USAGE_GUIDE.md)
+3. **架构理解**: [docs/ARCHITECTURE_COMPARISON.md](../ARCHITECTURE_COMPARISON.md)
+4. **实战示例**: 本文档中的所有代码示例
+
+---
+
+**总结**: 配置一次,在任何项目中使用 SuperAgent v3.0! 🚀
+
+**版本**: v3.0.0
+**更新**: 2026-01-11
