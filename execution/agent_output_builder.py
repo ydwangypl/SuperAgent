@@ -122,7 +122,7 @@ class AgentOutputBuilder:
         content = f"""# {target_name} - 测试需求文档
 
 **生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-**生成Agent**: SuperAgent v3.0
+**生成Agent**: SuperAgent v3.1
 
 ---
 
@@ -211,8 +211,8 @@ class AgentOutputBuilder:
             full_content = content
 
         # 添加生成信息
-        if "> 由 SuperAgent v3.0" not in full_content:
-            generation_info = f"\n\n> 由 SuperAgent v3.0 自动生成\n> 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        if "> 由 SuperAgent v3.1" not in full_content:
+            generation_info = f"\n\n> 由 SuperAgent v3.1 自动生成\n> 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             # 插入到标题下面
             lines = full_content.split('\n')
             if lines:

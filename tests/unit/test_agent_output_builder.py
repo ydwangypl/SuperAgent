@@ -85,7 +85,7 @@ class TestAgentOutputBuilder(unittest.TestCase):
         
         self.assertEqual(artifact.artifact_type, "documentation")
         self.assertIn("# User API", artifact.content)
-        self.assertIn("SuperAgent v3.0", artifact.content)
+        self.assertIn("SuperAgent v3.1", artifact.content)
         
         expected_path = (self.test_base_dir / "docs/api.md").resolve()
         self.assertEqual(Path(artifact.path).resolve(), expected_path)

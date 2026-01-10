@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-SuperAgent v3.0 - 对话管理层
+SuperAgent v3.1 - 对话管理层
 
 管理用户对话,需求澄清,意图识别
 """

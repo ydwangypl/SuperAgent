@@ -1,6 +1,70 @@
-# 🚀 SuperAgent v3.0 快速使用卡片
+# 🚀 SuperAgent v3.1 快速使用卡片
 
 > **一页纸快速参考** - 常用命令和使用示例
+>
+> **v3.1 新特性**: ✨ 任务持久化 | ✨ 增量版本控制 | ✨ 单任务焦点模式
+
+---
+
+## 🎯 v3.1 核心新功能
+
+### 1. TaskListManager - 任务持久化和断点续传
+
+```python
+from core.task_list_manager import TaskListManager
+
+# 创建任务列表
+manager = TaskListManager(project_root)
+task_list = manager.create_from_plan(plan)
+
+# 执行任务
+task = manager.get_next_task()
+manager.update_task(task.id, "running")
+manager.update_task(task.id, "completed")
+
+# 断点续传 - 程序中断后恢复
+manager2 = TaskListManager(project_root)
+loaded_list = manager2.load_or_create()
+print(f"恢复进度: {loaded_list.completed}/{loaded_list.total_tasks}")
+```
+
+### 2. GitAutoCommitManager - 增量版本控制
+
+```python
+from orchestration.git_manager import GitAutoCommitManager
+
+# 自动提交任务
+await git_manager.commit_task(
+    task_id="task-001",
+    description="实现用户登录",
+    changed_files=["login.py", "auth.py"]
+)
+
+# 提交 tasks.json 更新
+await git_manager.commit_tasks_json()
+
+# 查看提交历史
+history = git_manager.get_commit_history(limit=10)
+```
+
+### 3. SingleTaskMode - 单任务焦点模式
+
+```python
+from orchestration.models import OrchestrationConfig, SingleTaskConfig
+
+config = OrchestrationConfig(
+    single_task_mode=SingleTaskConfig(
+        enabled=True,
+        max_files_per_task=5,
+        enable_auto_split=True
+    )
+)
+
+# 自动验证和拆分超出限制的任务
+is_valid, reason = orchestrator._validate_task_scope(task)
+if not is_valid:
+    split_task = await orchestrator._split_task(task, reason)
+```
 
 ---
 
@@ -10,6 +74,9 @@
 # 克隆仓库
 git clone https://github.com/ydwangypl/SuperAgent.git
 cd SuperAgent
+
+# 检出版本
+git checkout v3.1.0
 
 # 安装依赖
 pip install -r requirements.txt
@@ -49,7 +116,49 @@ result = await adapter.execute_and_review(
 print(result['summary'])
 ```
 
-### 2. 内容生成 (新功能 ✨)
+### 2. 完整工作流程 (v3.1 增强)
+
+```python
+from pathlib import Path
+from core.task_list_manager import TaskListManager
+from orchestration.git_manager import GitAutoCommitManager
+from orchestration.orchestrator import Orchestrator
+from orchestration.models import OrchestrationConfig, SingleTaskConfig
+
+# 1. 创建配置 (启用 v3.1 新功能)
+config = OrchestrationConfig(
+    single_task_mode=SingleTaskConfig(
+        enabled=True,
+        max_files_per_task=5,
+        enable_auto_split=True
+    ),
+    git_auto_commit=GitAutoCommitConfig(
+        enabled=True
+    )
+)
+
+# 2. 初始化
+project_root = Path("/path/to/project")
+task_manager = TaskListManager(project_root)
+git_manager = GitAutoCommitManager(project_root, enabled=True)
+orchestrator = Orchestrator(project_root, config)
+
+# 3. 创建并执行任务
+task_list = task_manager.create_from_plan(plan)
+task = task_manager.get_next_task()
+
+# 执行...
+task_manager.update_task(task.id, "completed")
+
+# 4. 自动 Git commit
+await git_manager.commit_task(
+    task_id=task.id,
+    description=task.description,
+    changed_files=["file1.py"]
+)
+```
+
+### 3. 内容生成 (v3.0 功能)
 
 ```python
 # 文章生成
@@ -140,9 +249,72 @@ python scripts/testing/run_all_integration_tests.py
 
 ---
 
+## 🧪 测试 v3.1 新功能
+
+```bash
+# 运行所有测试
+pytest tests/ -v
+
+# 运行 P0 核心功能测试
+pytest tests/unit/test_task_list_manager.py -v
+pytest tests/unit/test_git_manager.py -v
+pytest tests/unit/test_single_task_mode.py -v
+
+# 运行集成测试
+pytest tests/integration/test_p0_integration.py -v
+
+# 运行演示脚本
+python examples/p0_demo_comprehensive.py
+```
+
+**测试结果**:
+- ✅ 55/55 单元测试通过 (100%)
+- ✅ 8/8 集成测试通过 (100%)
+- ✅ 性能测试全部通过
+
+---
+
+## 📊 v3.0 vs v3.1 功能对比
+
+| 功能 | v3.0 | v3.1 |
+|------|------|------|
+| 任务持久化 | ❌ | ✅ |
+| 断点续传 | ❌ | ✅ |
+| 自动 Git Commit | ❌ | ✅ |
+| 任务范围验证 | ❌ | ✅ |
+| 自动任务拆分 | ❌ | ✅ |
+| 5层架构 | ✅ | ✅ |
+| 3层记忆系统 | ✅ | ✅ |
+| Ralph Wiggum | ✅ | ✅ |
+
+---
+
 ## ⚙️ 配置选项
 
-### Ralph Wiggum 循环改进
+### v3.1 新配置
+
+```python
+from orchestration.models import OrchestrationConfig, SingleTaskConfig, GitAutoCommitConfig
+
+config = OrchestrationConfig(
+    # 单任务焦点模式 (v3.1 新增)
+    single_task_mode=SingleTaskConfig(
+        enabled=True,                      # 启用单任务模式
+        max_files_per_task=5,              # 每个任务最多修改文件数
+        max_file_size_kb=100,              # 单个文件最大大小
+        enable_auto_split=True             # 自动拆分超出限制的任务
+    ),
+    # Git 自动提交 (v3.1 新增)
+    git_auto_commit=GitAutoCommitConfig(
+        enabled=True,                      # 启用自动提交
+        commit_message_template="feat: {task_id} {description}",
+        auto_push=False,                   # 是否自动推送
+        auto_commit_tasks_json=True        # 自动提交 tasks.json
+    )
+)
+```
+
+### Ralph Wiggum 循环改进 (v3.0)
 
 ```python
 review_config = {
@@ -294,6 +466,6 @@ python superagent.py --version
 
 ---
 
-**版本**: v3.0.0
+**版本**: v3.1.0
 **更新**: 2026-01-11
 **项目**: https://github.com/ydwangypl/SuperAgent

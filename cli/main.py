@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-SuperAgent v3.0 CLI主入口
+SuperAgent v3.1 CLI主入口
 
 命令行交互界面,支持自然语言编程
 """
@@ -41,7 +41,7 @@ class SuperAgentCLI(cmd.Cmd):
     prompt = "\033[1;32mSuperAgent>\033[0m "
     intro = """
     ╔═══════════════════════════════════════════════════════╗
-    ║     SuperAgent v3.0 - 自然语言编程系统               ║
+    ║     SuperAgent v3.1 - 自然语言编程系统               ║
     ║                                                     ║
     ║     "通过对话,让编程变得简单"                       ║
     ╚═══════════════════════════════════════════════════════╝
@@ -830,7 +830,7 @@ class SuperAgentCLI(cmd.Cmd):
             config = load_config(project_root=self.project_root)
 
             print("\n" + "="*60)
-            print("  SuperAgent v3.0 配置")
+            print("  SuperAgent v3.1 配置")
             print("="*60)
 
             print(f"\n项目根目录: {config.project_root}")
@@ -926,7 +926,7 @@ class SuperAgentCLI(cmd.Cmd):
         else:
             # 显示概览帮助
             print("\n" + "="*60)
-            print("  SuperAgent v3.0 命令帮助")
+            print("  SuperAgent v3.1 命令帮助")
             print("="*60)
 
             print("\n内置命令:")
@@ -981,7 +981,7 @@ class SuperAgentCLI(cmd.Cmd):
 
     def do_quit(self, __args: str):
         """退出程序 - quit"""
-        print("\n感谢使用SuperAgent v3.0!")
+        print("\n感谢使用SuperAgent v3.1!")
         print("文档: docs/")
         print("问题反馈: github.com/superagent/issues")
         return True
@@ -1093,7 +1093,7 @@ def main():
     """主入口函数"""
     # 检查Python版本
     if sys.version_info < (3, 8):
-        print("❌ SuperAgent v3.0 需要Python 3.8或更高版本")
+        print("❌ SuperAgent v3.1 需要Python 3.8或更高版本")
         print(f"   当前版本: {sys.version}")
         sys.exit(1)
 

@@ -163,7 +163,7 @@ class MemoryManager:
         return f"{prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
     def _init_continuity_file_sync(self) -> None:
-        content = """# SuperAgent v3.0 - 持续记忆 (CONTINUITY)
+        content = """# SuperAgent v3.1 - 持续记忆 (CONTINUITY)
 
 > 此文件由SuperAgent自动维护,记录项目开发过程中的重要经验、错误教训和最佳实践
 
@@ -541,7 +541,7 @@ class MemoryManager:
                         async with aiofiles.open(self.continuity_file, 'r', encoding='utf-8') as f:
                             full_content = await f.read()
                     else:
-                        full_content = "# SuperAgent v3.0 - 持续记忆 (CONTINUITY)\n\n"
+                        full_content = "# SuperAgent v3.1 - 持续记忆 (CONTINUITY)\n\n"
                 else:
                     full_content = self._continuity_cache
 

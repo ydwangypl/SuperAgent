@@ -33,7 +33,7 @@ class TestSuperAgentCLI(unittest.TestCase):
     def test_intro_display(self):
         """测试欢迎信息"""
         intro = self.cli.intro
-        self.assertIn("SuperAgent v3.0", intro)
+        self.assertIn("SuperAgent v3.1", intro)
         self.assertIn("自然语言编程系统", intro)
 
     @patch('sys.stdout', new_callable=StringIO)

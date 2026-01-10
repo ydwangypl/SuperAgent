@@ -1,4 +1,4 @@
-# SuperAgent v3.0 记忆系统使用指南
+# SuperAgent v3.1 记忆系统使用指南
 
 > **版本**: v1.0
 > **更新日期**: 2026-01-08
@@ -20,7 +20,7 @@
 
 ### 设计理念
 
-SuperAgent v3.0的3层记忆系统基于认知科学原理,模拟人类记忆的三个层次:
+SuperAgent v3.1的3层记忆系统基于认知科学原理,模拟人类记忆的三个层次:
 
 - **情节记忆 (Episodic Memory)**: 记录"发生了什么" - 任务执行历史
 - **语义记忆 (Semantic Memory)**: 存储"知道什么" - 项目知识和架构决策
@@ -290,7 +290,7 @@ for memory in memories:
 #### 格式
 
 ```markdown
-# SuperAgent v3.0 - 持续记忆 (CONTINUITY)
+# SuperAgent v3.1 - 持续记忆 (CONTINUITY)
 
 > 此文件由SuperAgent自动维护
 

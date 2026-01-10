@@ -1,8 +1,8 @@
-# SuperAgent v3.0 使用示例
+# SuperAgent v3.1 使用示例
 
 ## 📋 概述
 
-本文档提供了 SuperAgent v3.0 的实际使用示例,展示如何在 Claude Code 中集成和使用 SuperAgent。
+本文档提供了 SuperAgent v3.1 的实际使用示例,展示如何在 Claude Code 中集成和使用 SuperAgent。
 
 ---
 
@@ -585,4 +585,4 @@ asyncio.run(export_memory())
 
 ---
 
-**SuperAgent v3.0 - 让 Claude Code 更智能!** 🚀
+**SuperAgent v3.1 - 让 Claude Code 更智能!** 🚀

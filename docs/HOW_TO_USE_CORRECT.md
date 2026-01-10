@@ -1,4 +1,4 @@
-# SuperAgent v3.0 正确使用指南
+# SuperAgent v3.1 正确使用指南
 
 **在 Claude Code 环境中使用 SuperAgent**
 
@@ -8,7 +8,7 @@
 
 ### SuperAgent 是什么?
 
-**SuperAgent v3.0** 是一个 **Python 库/模块**,不是独立的 CLI 工具!
+**SuperAgent v3.1** 是一个 **Python 库/模块**,不是独立的 CLI 工具!
 
 ```
 ┌─────────────────────────────────────────────────────────┐

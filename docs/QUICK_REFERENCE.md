@@ -1,4 +1,4 @@
-# SuperAgent v3.0 快速参考卡
+# SuperAgent v3.1 快速参考卡
 
 **便捷简称: SA 或 sa**
 

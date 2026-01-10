@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-SuperAgent v3.0 配置管理模块
+SuperAgent v3.1 配置管理模块
 
 提供统一的配置管理接口
 """
@@ -52,7 +52,7 @@ class CodeReviewConfig(BaseModel):
     enable_best_practices: bool = True
 
     # Ralph Wiggum 循环配置
-    enable_ralph_wiggum: bool = False
+    enable_ralph_wiggum: bool = True  # ✅ 默认启用 Ralph Wiggum 迭代改进
     ralph_wiggum_max_iterations: int = Field(default=3, ge=1, le=10)
 
 

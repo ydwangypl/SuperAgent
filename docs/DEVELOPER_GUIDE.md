@@ -1,6 +1,6 @@
 # SuperAgent 开发者指南
 
-本文档旨在为开发者提供 SuperAgent v3.0 的核心组件 API 说明及扩展指南。
+本文档旨在为开发者提供 SuperAgent v3.1 的核心组件 API 说明及扩展指南。
 
 ## 1. 安全验证 (SecurityValidator)
 
@@ -60,7 +60,7 @@ class MyOrchestrator(BaseOrchestrator):
 `MemoryManager` 负责管理长期和短期记忆。
 
 ### 初始化建议
-在 v3.0 中，`MemoryManager` 支持无参初始化，默认使用当前工作目录。
+在 v3.1 中，`MemoryManager` 支持无参初始化，默认使用当前工作目录。
 
 ```python
 from memory.memory_manager import MemoryManager

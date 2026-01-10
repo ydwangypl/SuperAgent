@@ -241,6 +241,26 @@ class AgentResource:
 
 
 @dataclass
+class GitAutoCommitConfig:
+    """Git 自动提交配置"""
+    enabled: bool = True                        # 是否启用自动提交
+    commit_message_template: str = "feat: {task_id} {description}"  # Commit message 模板
+    auto_push: bool = False                     # 是否自动推送到远程
+    auto_commit_tasks_json: bool = True         # 是否自动提交 tasks.json 更新
+
+
+@dataclass
+class SingleTaskConfig:
+    """单任务焦点模式配置"""
+    enabled: bool = True                        # 是否启用单任务焦点模式
+    max_parallel_tasks: int = 1                 # 最大并行任务数(单任务模式通常为1)
+    max_files_per_task: int = 5                 # 每个任务最多修改的文件数
+    max_file_size_kb: int = 100                 # 单个文件最大大小(KB)
+    force_incremental: bool = True              # 强制增量执行(一次只执行一个任务)
+    enable_auto_split: bool = True              # 启用自动任务拆分
+
+
+@dataclass
 class OrchestrationConfig:
     """编排配置"""
     # 并发配置
@@ -272,9 +292,15 @@ class OrchestrationConfig:
     enable_security_check: bool = True          # 启用安全检查
     enable_performance_check: bool = True       # 启用性能检查
     enable_best_practices: bool = True          # 启用最佳实践检查
-    enable_ralph_wiggum: bool = False           # 启用Ralph Wiggum迭代改进
+    enable_ralph_wiggum: bool = True            # ✅ 启用 Ralph Wiggum 迭代改进
     min_overall_score: float = 70.0             # 最低综合评分要求
     max_critical_issues: int = 0                # 最大严重问题数(0为不允许)
+
+    # Git 自动提交配置
+    git_auto_commit: GitAutoCommitConfig = field(default_factory=GitAutoCommitConfig)
+
+    # 单任务焦点模式配置
+    single_task_mode: SingleTaskConfig = field(default_factory=SingleTaskConfig)
 
 
 @dataclass

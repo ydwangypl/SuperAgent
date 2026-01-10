@@ -29,7 +29,7 @@ def cmd_config_show(args):
     config = load_config(config_path)
 
     print("\n" + "="*60)
-    print("  SuperAgent v3.0 配置")
+    print("  SuperAgent v3.1 配置")
     print("="*60)
 
     print(f"\n项目根目录: {config.project_root}")
@@ -192,7 +192,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="SuperAgent v3.0 配置管理工具",
+        description="SuperAgent v3.1 配置管理工具",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
 

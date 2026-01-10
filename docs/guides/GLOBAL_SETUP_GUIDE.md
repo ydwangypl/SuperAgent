@@ -1,17 +1,17 @@
-# SuperAgent v3.0 全局配置指南
+# SuperAgent v3.1 全局配置指南
 
-**在任何项目中使用 SuperAgent v3.0**
+**在任何项目中使用 SuperAgent v3.1**
 
 ---
 
 ## 🎯 您的需求
 
 - ✅ 不一定要在 SuperAgent 项目目录下开发
-- ✅ 可以在任何项目中使用 SuperAgent v3.0
+- ✅ 可以在任何项目中使用 SuperAgent v3.1
 - ✅ 通过环境变量配置 SuperAgent 路径
 - ✅ 使用新的统一接口 (UnifiedAdapter)
 
-**v3.0 新架构**: 核心抽象层 + 适配器层 + 扩展层
+**v3.1 新架构**: 核心抽象层 + 适配器层 + 扩展层
 
 ---
 
@@ -29,7 +29,7 @@ $env:SUPERAGENT_ROOT = "E:\SuperAgent"
 [System.Environment]::SetEnvironmentVariable('SUPERAGENT_ROOT', 'E:\SuperAgent', 'User')
 
 # 3. 验证配置
-python -c "from adapters import UnifiedAdapter; print('✅ SuperAgent v3.0 导入成功!')"
+python -c "from adapters import UnifiedAdapter; print('✅ SuperAgent v3.1 导入成功!')"
 ```
 
 #### Windows (CMD)
@@ -74,7 +74,7 @@ from pathlib import Path
 superagent_root = Path("E:/SuperAgent")
 sys.path.insert(0, str(superagent_root))
 
-# ✅ v3.0 新方式: 使用统一接口
+# ✅ v3.1 新方式: 使用统一接口
 from adapters import UnifiedAdapter
 from core.executor import Task
 
@@ -124,7 +124,7 @@ SUPERAGENT_ROOT = Path("E:/SuperAgent")
 if str(SUPERAGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(SUPERAGENT_ROOT))
 
-# ✅ v3.0 新架构: 导入核心模块
+# ✅ v3.1 新架构: 导入核心模块
 from adapters import UnifiedAdapter
 from core.executor import Executor, Task, ExecutionResult
 from core.reviewer import Reviewer, Artifact, ReviewResult
@@ -169,7 +169,7 @@ asyncio.run(main())
 
 ## 💡 在 Claude Code 中使用
 
-### 在任何项目中使用 SA v3.0
+### 在任何项目中使用 SA v3.1
 
 **配置好环境变量后**,您可以在任何项目中使用:
 
@@ -177,7 +177,7 @@ asyncio.run(main())
 您: 使用 SA 开发一个用户登录功能
 
 我 (Claude Code):
-  # ✅ v3.0 新方式: 使用统一适配器
+  # ✅ v3.1 新方式: 使用统一适配器
   from adapters import UnifiedAdapter
   from pathlib import Path
 
@@ -201,7 +201,7 @@ asyncio.run(main())
   print(result['summary'])
 ```
 
-**v3.0 优势**:
+**v3.1 优势**:
 - ✅ 更简洁的API (一行代码完成执行+审查)
 - ✅ 自动集成Ralph Wiggum循环改进
 - ✅ 支持多领域 (代码 + 内容 + 未来扩展)
@@ -226,7 +226,7 @@ superagent_root = Path("E:/SuperAgent")
 if str(superagent_root) not in sys.path:
     sys.path.insert(0, str(superagent_root))
 
-# ✅ 导入 v3.0 统一接口
+# ✅ 导入 v3.1 统一接口
 from adapters import UnifiedAdapter
 import asyncio
 
@@ -330,7 +330,7 @@ if __name__ == "__main__":
 ### 示例 3: 内容生成 (新功能 ✨)
 
 ```python
-# 使用 SuperAgent v3.0 生成技术文章
+# 使用 SuperAgent v3.1 生成技术文章
 
 from adapters import UnifiedAdapter
 from pathlib import Path
@@ -381,14 +381,14 @@ from pathlib import Path
 # 设置路径
 sys.path.insert(0, 'E:/SuperAgent')
 
-# ✅ 测试 v3.0 新架构导入
+# ✅ 测试 v3.1 新架构导入
 from adapters import UnifiedAdapter
 from core.executor import Executor
 from core.reviewer import Reviewer
 from extensions.writing_executor import WritingExecutor
 from extensions.content_reviewer import ContentReviewer
 
-print('✅ SuperAgent v3.0 导入成功!')
+print('✅ SuperAgent v3.1 导入成功!')
 print('✅ 核心抽象层可用')
 print('✅ 适配器层可用')
 print('✅ 扩展层可用')
@@ -397,7 +397,7 @@ print('✅ 扩展层可用')
 
 **预期输出**:
 ```
-✅ SuperAgent v3.0 导入成功!
+✅ SuperAgent v3.1 导入成功!
 ✅ 核心抽象层可用
 ✅ 适配器层可用
 ✅ 扩展层可用
@@ -407,7 +407,7 @@ print('✅ 扩展层可用')
 
 ## 🎯 最佳实践
 
-### ✅ 推荐 (v3.0)
+### ✅ 推荐 (v3.1)
 
 1. **使用 UnifiedAdapter** - 简洁的统一接口
 2. **启用循环改进** - 重要任务使用 `enable_iterative=True`
@@ -424,9 +424,9 @@ print('✅ 扩展层可用')
 
 ---
 
-## 📊 v2.0 vs v3.0 对比
+## 📊 v2.0 vs v3.1 对比
 
-| 特性 | v2.0 (旧) | v3.0 (新) |
+| 特性 | v2.0 (旧) | v3.1 (新) |
 |------|-----------|-----------|
 | **导入方式** | `from orchestration import Orchestrator` | `from adapters import UnifiedAdapter` |
 | **代码行数** | ~10行 | ~3行 |
@@ -435,9 +435,9 @@ print('✅ 扩展层可用')
 | **多领域支持** | ❌ 仅代码 | ✅ 代码+内容+扩展 |
 | **向后兼容** | N/A | ✅ 100% |
 
-**v3.0 示例**:
+**v3.1 示例**:
 ```python
-# ✅ v3.0 - 简洁!
+# ✅ v3.1 - 简洁!
 adapter = UnifiedAdapter(project_path)
 result = await adapter.execute_and_review(
     task_type="code",
@@ -469,8 +469,8 @@ review = reviewer.review_code(...)
 
 # Step 2: 重启 PowerShell
 
-# Step 3: 验证 v3.0
-python -c "from adapters import UnifiedAdapter; print('✅ v3.0 Ready!')"
+# Step 3: 验证 v3.1
+python -c "from adapters import UnifiedAdapter; print('✅ v3.1 Ready!')"
 ```
 
 ### Linux/macOS 用户
@@ -482,8 +482,8 @@ echo 'export SUPERAGENT_ROOT="/path/to/SuperAgent"' >> ~/.bashrc
 # Step 2: 重新加载
 source ~/.bashrc
 
-# Step 3: 验证 v3.0
-python -c "from adapters import UnifiedAdapter; print('✅ v3.0 Ready!')"
+# Step 3: 验证 v3.1
+python -c "from adapters import UnifiedAdapter; print('✅ v3.1 Ready!')"
 ```
 
 ---
@@ -496,7 +496,7 @@ python -c "from adapters import UnifiedAdapter; print('✅ v3.0 Ready!')"
 您: 使用 SA 开发一个博客系统
 
 我 (Claude Code):
-  # ✅ v3.0 新架构
+  # ✅ v3.1 新架构
   from adapters import UnifiedAdapter
   from pathlib import Path
 
@@ -525,7 +525,7 @@ python -c "from adapters import UnifiedAdapter; print('✅ v3.0 Ready!')"
 
 ## 📚 相关文件
 
-- [QUICK_REFERENCE.md](../../QUICK_REFERENCE.md) - v3.0 完整快速参考
+- [QUICK_REFERENCE.md](../../QUICK_REFERENCE.md) - v3.1 完整快速参考
 - [COMMANDS_CHEATSHEET.md](../../COMMANDS_CHEATSHEET.md) - 命令行速查
 - [docs/USAGE_GUIDE.md](../USAGE_GUIDE.md) - 完整使用指南
 - [docs/ARCHITECTURE_COMPARISON.md](../ARCHITECTURE_COMPARISON.md) - 架构对比
@@ -541,7 +541,7 @@ python -c "from adapters import UnifiedAdapter; print('✅ v3.0 Ready!')"
 
 ---
 
-**总结**: 配置一次,在任何项目中使用 SuperAgent v3.0! 🚀
+**总结**: 配置一次,在任何项目中使用 SuperAgent v3.1! 🚀
 
-**版本**: v3.0.0
+**版本**: v3.1.0
 **更新**: 2026-01-11

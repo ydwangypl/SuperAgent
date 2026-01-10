@@ -1,8 +1,8 @@
-# SuperAgent v3.0 Token 优化功能实现报告
+# SuperAgent v3.1 Token 优化功能实现报告
 
 ## 📋 概述
 
-本报告记录了 SuperAgent v3.0 Token 优化功能的完整实现过程，将 V2.2.0 的核心 Token 优化技术成功移植到 V3.0 架构。
+本报告记录了 SuperAgent v3.1 Token 优化功能的完整实现过程，将 V2.2.0 的核心 Token 优化技术成功移植到 V3.0 架构。
 
 ## ✅ 已实现功能
 
@@ -208,4 +208,4 @@ print(report)
 
 ---
 
-*本报告由 SuperAgent v3.0 Token 优化功能实现任务自动生成*
+*本报告由 SuperAgent v3.1 Token 优化功能实现任务自动生成*

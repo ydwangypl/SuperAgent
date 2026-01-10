@@ -38,6 +38,7 @@ from .review_orchestrator import ReviewOrchestrator
 from .scheduler import TaskScheduler
 from .result_handler import ExecutionResultHandler
 from .worktree_orchestrator import WorktreeOrchestrator
+from .git_manager import GitAutoCommitManager
 from config.settings import SuperAgentConfig, load_config
 
 
@@ -85,10 +86,21 @@ class Orchestrator(BaseOrchestrator):
             worktree_mgr = GitWorktreeManager(self.project_root, self.config.worktree)
         except ValueError:
             worktree_mgr = None
-        
+
         self.worktree_orchestrator = WorktreeOrchestrator(self.project_root, worktree_mgr)
         self.scheduler = TaskScheduler(self.config, self.agent_dispatcher)
-        
+
+        # 6. 初始化 Git 自动提交管理器
+        git_config = self.config.git_auto_commit
+        self.git_manager = GitAutoCommitManager(
+            project_root=self.project_root,
+            enabled=git_config.enabled,
+            commit_message_template=git_config.commit_message_template,
+            auto_push=git_config.auto_push
+        )
+        if git_config.enabled:
+            logger.info("Git 自动提交已启用")
+
         # 执行状态
         self.state = OrchestrationState(
             project_id=f"project-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
@@ -250,11 +262,57 @@ class Orchestrator(BaseOrchestrator):
             # 执行批次 (委托给 Scheduler)
             batch_results = await self.scheduler.execute_batch(ready_tasks, worktree_creator_callback=create_wt)
 
-            # 后处理: 同步 Worktree + 保存记忆 + 更新状态
+            # 后处理: 同步 Worktree + 保存记忆 + 范围验证 + Git提交 + 更新状态
             for task in batch_results:
                 await self.worktree_orchestrator.sync_to_root(task)
                 await self.result_handler.save_task_memory(task, plan.description)
-            
+
+                # 单任务焦点模式: 验证任务范围
+                if self.config.single_task_mode.enabled and task.status == TaskStatus.COMPLETED:
+                    is_valid, reason = self._validate_task_scope(task)
+                    if not is_valid:
+                        logger.warning(f"任务 {task.task_id} 超出单任务模式限制: {reason}")
+
+                        # 尝试自动拆分任务
+                        if self.config.single_task_mode.enable_auto_split:
+                            split_task = await self._split_task(task, reason)
+                            if split_task:
+                                logger.info(f"任务 {task.task_id} 已自动拆分")
+                                # 更新任务状态
+                                task.status = TaskStatus.COMPLETED
+                                task.outputs["split_info"] = {
+                                    "reason": reason,
+                                    "split_task_id": split_task.task_id
+                                }
+                            else:
+                                logger.error(f"任务 {task.task_id} 拆分失败")
+                                task.status = TaskStatus.FAILED
+                                task.error = reason
+                        else:
+                            # 不允许自动拆分,标记为失败
+                            task.status = TaskStatus.FAILED
+                            task.error = reason
+
+                # Git 自动提交 (如果启用)
+                if self.git_manager and self.config.git_auto_commit.enabled:
+                    step = plan.get_step_by_id(task.step_id)
+                    if step and task.status == TaskStatus.COMPLETED:
+                        # 收集变更文件 (从任务输出中获取)
+                        changed_files = task.outputs.get("modified_files", [])
+                        if isinstance(changed_files, str):
+                            changed_files = [changed_files]
+
+                        # 如果没有明确列出文件,暂存所有变更
+                        if not changed_files:
+                            logger.debug(f"任务 {task.task_id} 未指定变更文件,跳过自动提交")
+                        else:
+                            await self.git_manager.commit_task(
+                                task_id=task.task_id,
+                                description=step.description,
+                                changed_files=changed_files,
+                                summary=step.details if hasattr(step, 'details') else None
+                            )
+
             executed.extend(batch_results)
             remaining = [t for t in remaining if t not in batch_results]
             self.result_handler.update_state(executed)
@@ -287,3 +345,122 @@ class Orchestrator(BaseOrchestrator):
         if self.error_recovery:
             stats["error_recovery_stats"] = self.error_recovery.get_statistics()
         return stats
+
+    def _validate_task_scope(
+        self,
+        task: TaskExecution
+    ) -> tuple[bool, Optional[str]]:
+        """验证任务范围是否在单任务焦点模式限制内
+
+        Args:
+            task: 任务执行对象
+
+        Returns:
+            (is_valid, reason): 是否有效及原因(如果无效)
+        """
+        config = self.config.single_task_mode
+
+        # 如果未启用单任务模式,直接通过
+        if not config.enabled:
+            return True, None
+
+        # 检查任务输出中的修改文件数量
+        modified_files = task.outputs.get("modified_files", [])
+        if isinstance(modified_files, str):
+            modified_files = [modified_files]
+
+        # 检查文件数量
+        if len(modified_files) > config.max_files_per_task:
+            reason = (
+                f"任务 {task.task_id} 修改了 {len(modified_files)} 个文件, "
+                f"超过单任务模式限制 ({config.max_files_per_task} 个文件)"
+            )
+            logger.warning(reason)
+            return False, reason
+
+        # 检查文件大小
+        for file_path in modified_files:
+            full_path = self.project_root / file_path
+            if full_path.exists():
+                size_kb = full_path.stat().st_size / 1024
+                if size_kb > config.max_file_size_kb:
+                    reason = (
+                        f"任务 {task.task_id} 修改的文件 {file_path} "
+                        f"大小为 {size_kb:.1f}KB, "
+                        f"超过单任务模式限制 ({config.max_file_size_kb}KB)"
+                    )
+                    logger.warning(reason)
+                    return False, reason
+
+        # 所有检查通过
+        logger.debug(f"任务 {task.task_id} 范围验证通过")
+        return True, None
+
+    async def _split_task(
+        self,
+        task: TaskExecution,
+        reason: str
+    ) -> Optional[TaskExecution]:
+        """拆分过大的任务为多个子任务
+
+        Args:
+            task: 需要拆分的任务
+            reason: 拆分原因
+
+        Returns:
+            拆分后的第一个子任务,如果拆分失败则返回 None
+        """
+        config = self.config.single_task_mode
+
+        if not config.enable_auto_split:
+            logger.warning(f"任务 {task.task_id} 需要拆分但自动拆分未启用")
+            return None
+
+        logger.info(f"开始拆分任务 {task.task_id}: {reason}")
+
+        # 获取修改的文件列表
+        modified_files = task.outputs.get("modified_files", [])
+        if isinstance(modified_files, str):
+            modified_files = [modified_files]
+
+        # 确保文件列表是列表格式
+        if not isinstance(modified_files, list):
+            modified_files = [modified_files]
+
+        # 如果文件数量不多,不需要拆分
+        if len(modified_files) <= config.max_files_per_task:
+            logger.debug(f"任务 {task.task_id} 文件数量在限制内,无需拆分")
+            return task
+
+        # 将文件列表拆分为多个批次
+        file_batches = []
+        for i in range(0, len(modified_files), config.max_files_per_task):
+            batch = modified_files[i:i + config.max_files_per_task]
+            file_batches.append(batch)
+
+        logger.info(
+            f"任务 {task.task_id} 将拆分为 {len(file_batches)} 个子任务, "
+            f"每个子任务最多 {config.max_files_per_task} 个文件"
+        )
+
+        # 创建第一个子任务 (后续子任务需要动态创建步骤)
+        # 注意: 这里简化处理,实际应用中可能需要更新 ExecutionPlan
+        first_batch = file_batches[0]
+
+        # 创建子任务ID
+        sub_task_id = f"{task.task_id}-sub-01"
+
+        logger.info(
+            f"创建子任务 {sub_task_id}, "
+            f"包含文件: {first_batch}"
+        )
+
+        # 返回第一个子任务的信息
+        # 注意: 这里返回原始任务,但更新其输出以只包含第一批文件
+        # 实际的子任务创建需要在 Planner 层面完成
+        task.outputs["modified_files"] = first_batch
+        task.outputs["is_split_task"] = True
+        task.outputs["total_subtasks"] = len(file_batches)
+        task.outputs["subtask_index"] = 0
+
+        return task

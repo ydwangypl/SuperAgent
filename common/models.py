@@ -18,7 +18,7 @@ class StepStatus(Enum):
 
 
 class AgentType(Enum):
-    """Agent类型 (v3.0 扩展版)"""
+    """Agent类型 (v3.1 扩展版)"""
     # 核心管理与设计
     PRODUCT_MANAGEMENT = "product-management"
     DATABASE_DESIGN = "database-design"

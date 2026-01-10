@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-SuperAgent v3.0 单元测试配置
+SuperAgent v3.1 单元测试配置
 """
 
 import sys

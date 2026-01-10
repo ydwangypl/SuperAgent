@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-SuperAgent v3.0 - 规划层
+SuperAgent v3.1 - 规划层
 
 负责项目规划、步骤拆解、依赖分析
 """
