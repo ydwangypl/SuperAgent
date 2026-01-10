@@ -42,4 +42,9 @@ test_reports/
 # Tests
 .pytest_cache/
 .coverage
+coverage.json
 htmlcov/
+
+# Temporary files
+.tmp/
+__init__.py

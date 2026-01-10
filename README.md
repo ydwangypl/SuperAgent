@@ -4,6 +4,11 @@
 >
 > 🎉 **v3.0全新架构**: 5层架构 + 3层记忆系统,防止重复错误,加速项目开发!
 
+**📌 快速导航**:
+- [🚀 快速参考卡](QUICK_REFERENCE.md) - 一页纸快速指南
+- [⚡ 命令行速查](COMMANDS_CHEATSHEET.md) - 常用命令速查
+- [💻 VS Code使用提示](.vscode/SUPERAGENT_GUIDE.md) - IDE开发提示
+
 ---
 
 ## 🎯 核心定位
@@ -81,7 +86,7 @@ result = await adapter.execute_and_review(
 - ✅ 符合所有SOLID原则
 - ✅ 80个测试,97%+覆盖率
 
-详见: [重构进度总结](REFACTOR_PROGRESS_SUMMARY.md) | [使用指南](docs/USAGE_GUIDE.md)
+详见: [重构进度总结](docs/reports/REFACTOR_PROGRESS_SUMMARY.md) | [使用指南](docs/USAGE_GUIDE.md)
 
 ---
 
