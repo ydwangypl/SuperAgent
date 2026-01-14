@@ -8,7 +8,7 @@
 
 import re
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple, Set
 
 
 from .exceptions import SecurityError
@@ -109,6 +109,70 @@ def validate_path(path: Union[str, Path], base_dir: Union[str, Path]) -> Path:
         SecurityError: 如果检测到目录穿越、路径无效或恶意符号链接
     """
     return SecurityValidator.validate_path(path, base_dir)
+
+
+class CommandWhitelist:
+    """
+    命令白名单验证,防止危险命令执行
+    """
+    ALLOWED_COMMANDS: Set[str] = {
+        # 文件检查
+        "ls", "cat", "head", "tail", "wc", "grep", "find",
+        # 版本控制
+        "git",
+        # Node.js
+        "npm", "node", "npx",
+        # Python
+        "python", "python3", "pip", "pytest", "poetry",
+        # 进程管理
+        "ps", "lsof", "sleep", "pkill",
+        # 文本处理
+        "sed", "awk", "sort", "uniq",
+        # 压缩
+        "tar", "gzip", "zip", "unzip",
+        # 系统
+        "whoami", "pwd", "date"
+    }
+
+    BLOCKED_COMMANDS: Set[str] = {
+        # 删除命令
+        "rm", "rmdir", "del", "delete",
+        # 磁盘操作
+        "dd", "mkfs", "format", "fdisk",
+        # 权限相关
+        "chmod", "chown", "sudo", "su",
+        # 数据传输
+        "curl", "wget", "nc", "netcat",
+        # 系统关键
+        "reboot", "shutdown", "halt"
+    }
+
+    @classmethod
+    def validate(cls, cmd_args: List[str]) -> Tuple[bool, str]:
+        """
+        验证命令是否安全
+        
+        Args:
+            cmd_args: 命令参数列表
+            
+        Returns:
+            Tuple[bool, str]: (是否安全, 理由)
+        """
+        if not cmd_args:
+            return False, "命令不能为空"
+
+        command_name = cmd_args[0]
+        # 处理路径形式的命令 (如 ./script.sh)
+        if '/' in command_name or '\\' in command_name:
+            command_name = Path(command_name).name
+
+        if command_name in cls.BLOCKED_COMMANDS:
+            return False, f"命令 '{command_name}' 已被禁用,存在安全风险"
+
+        if command_name not in cls.ALLOWED_COMMANDS:
+            return False, f"命令 '{command_name}' 不在允许列表中"
+
+        return True, "OK"
 
 
 class SecurityValidator:

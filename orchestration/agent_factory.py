@@ -9,8 +9,7 @@ Agent工厂
 import logging
 import uuid
 import asyncio
-from typing import Dict, Optional, Set, Type, List
-from pathlib import Path
+from typing import Dict, Optional, Set, List
 
 from common.models import AgentType
 from .registry import AgentRegistry
@@ -96,7 +95,7 @@ class AgentFactory:
                 tasks.append(cls._async_create_agent(agent_type, agent_id, config))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         pool: Dict[str, BaseAgent] = {}
         for result in results:
             if isinstance(result, BaseAgent):

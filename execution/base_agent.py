@@ -26,6 +26,22 @@ from .models import (
 )
 from common.security import sanitize_input, check_sensitive_data
 
+# TDD Validator 动态导入 (DRY 优化)
+try:
+    from execution.tdd_validator import TDDValidator
+    TDD_AVAILABLE = True
+except ImportError:
+    TDD_AVAILABLE = False
+    TDDValidator = None
+
+# SystematicDebugger 动态导入 (DRY 优化)
+try:
+    from execution.systematic_debugger import SystematicDebugger
+    DEBUGGER_AVAILABLE = True
+except ImportError:
+    DEBUGGER_AVAILABLE = False
+    SystematicDebugger = None
+
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +74,27 @@ class BaseAgent(ABC):
         self._current_logs: List[str] = []
         self._current_metrics: Dict[str, Any] = {}
 
+        # 核心组件初始化 (DRY 优化)
+        self.tdd_validator: Optional[TDDValidator] = None
+        self.debugger: Optional[SystematicDebugger] = None
+        
         logger.info(f"Agent {self.agent_id} 初始化完成")
+
+    def setup_tdd(self, enabled: bool = True, strict_mode: bool = False):
+        """设置 TDD 验证组件"""
+        if enabled and TDD_AVAILABLE:
+            self.tdd_validator = TDDValidator(strict_mode=strict_mode)
+            logger.info(f"Agent {self.agent_id}: TDD Validator 已启用")
+        else:
+            self.tdd_validator = None
+
+    def setup_debugger(self, enabled: bool = True):
+        """设置调试器组件"""
+        if enabled and DEBUGGER_AVAILABLE:
+            self.debugger = SystematicDebugger()
+            logger.info(f"Agent {self.agent_id}: SystematicDebugger 已启用")
+        else:
+            self.debugger = None
 
     @classmethod
     @abstractmethod
@@ -396,6 +432,41 @@ class BaseAgent(ABC):
     def set_metric(self, key: str, value: Any):
         """设置执行指标 (Phase 3 优化)"""
         self._current_metrics[key] = value
+
+    async def log_usage(
+        self,
+        context: AgentContext,
+        original_tokens: int,
+        compressed_tokens: int = 0,
+        incremental_tokens: int = 0,
+        files_processed: int = 0,
+        files_incremental: int = 0,
+        compression_method: str = ""
+    ):
+        """记录 Token 使用情况 (Phase 3 优化)
+        
+        通过 context 中的 token_monitor 记录使用量。
+        如果 monitor 不可用, 则仅记录日志。
+        """
+        if context.token_monitor:
+            try:
+                await context.token_monitor.log_usage(
+                    agent_type=self.agent_id,
+                    task_id=context.task_id,
+                    original_tokens=original_tokens,
+                    compressed_tokens=compressed_tokens,
+                    incremental_tokens=incremental_tokens,
+                    files_processed=files_processed,
+                    files_incremental=files_incremental,
+                    compression_method=compression_method
+                )
+                # 同时更新内部指标
+                self.set_metric("tokens_original", original_tokens)
+                self.set_metric("tokens_compressed", compressed_tokens or original_tokens)
+            except Exception as e:
+                logger.error(f"记录 Token 使用失败: {e}")
+        else:
+            logger.debug(f"Agent {self.agent_id} 使用了 {original_tokens} tokens (监控器不可用)")
 
     async def _save_intermediate_result(
         self,

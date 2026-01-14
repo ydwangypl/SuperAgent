@@ -15,7 +15,6 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 import json
 import uuid
-import re
 import aiofiles
 from common.monitoring import MetricsManager
 from common.exceptions import MemorySystemError
@@ -27,6 +26,7 @@ SECTION_MISTAKES = "## 📝 错误与教训"
 SECTION_PRACTICES = "## 🎯 最佳实践"
 SECTION_ARCHITECTURE = "## 🏗️ 架构决策"
 SECTION_STATISTICS = "## 📊 项目统计"
+
 
 @dataclass
 class MemoryEntry:
@@ -73,7 +73,7 @@ class MemoryManager:
 
         self.project_root = project_root or Path.cwd()
 
-        # 记忆目录
+        # 配置各层记忆的存储路径
         self.memory_dir = self.project_root / ".superagent" / "memory"
         self.episodic_dir = self.memory_dir / "episodic"
         self.semantic_dir = self.memory_dir / "semantic"
@@ -113,7 +113,7 @@ class MemoryManager:
 
         self.initialized = True
         logger.info(f"记忆管理器初始化完成: {self.memory_dir}")
-        
+
         # 异步构建类别索引 (不阻塞初始化)
         asyncio.create_task(self._build_category_index())
 
@@ -123,18 +123,22 @@ class MemoryManager:
             # 1. 先在不占锁的情况下收集所有 ID
             async with self._lock:
                 mids = list(self.index.get(mtype, []))
-            
+
             for mid in mids:
                 try:
-                    folder = self.semantic_dir if mtype == "semantic" else self.procedural_dir
+                    folder = (self.semantic_dir if mtype == "semantic"
+                              else self.procedural_dir)
                     file_path = folder / f"{mid}.json"
-                    
+
                     if file_path.exists():
                         # 2. 读取文件 (IO)
                         async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
-                            data = json.loads(await f.read())
-                            category = data.get("metadata", {}).get("category", "general")
-                            
+                            content = await f.read()
+                            memory_data = json.loads(content)
+                            category = memory_data.get("metadata", {}).get(
+                                "category", "general"
+                            )
+
                             # 3. 更新内存中的索引 (占锁)
                             async with self._lock:
                                 if category not in self._category_index[mtype]:
@@ -163,7 +167,7 @@ class MemoryManager:
         return f"{prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
     def _init_continuity_file_sync(self) -> None:
-        content = """# SuperAgent v3.1 - 持续记忆 (CONTINUITY)
+        content = f"""# SuperAgent v3.2 - 持续记忆 (CONTINUITY)
 
 > 此文件由SuperAgent自动维护,记录项目开发过程中的重要经验、错误教训和最佳实践
 
@@ -225,16 +229,16 @@ class MemoryManager:
         """从缓存获取记忆条目"""
         if memory_type not in self._cache:
             return None
-        
-        entry_info = self._cache[memory_type].get(memory_id)
-        if not entry_info:
+
+        cached_entry_data = self._cache[memory_type].get(memory_id)
+        if not cached_entry_data:
             return None
-            
-        entry, timestamp = entry_info
+
+        entry, timestamp = cached_entry_data
         if time.time() - timestamp > self._cache_ttl:
             del self._cache[memory_type][memory_id]
             return None
-            
+
         return entry
 
     def _save_to_cache(self, memory_type: str, memory_id: str, entry: Dict[str, Any]) -> None:
@@ -243,10 +247,12 @@ class MemoryManager:
             # 如果达到最大容量，删除最早的一个 (简单淘汰策略)
             if len(self._cache[memory_type]) >= self._max_cache_size:
                 # 找到最早的时间戳
-                oldest_id = min(self._cache[memory_type].keys(), 
-                               key=lambda k: self._cache[memory_type][k][1])
+                oldest_id = min(
+                    self._cache[memory_type].keys(),
+                    key=lambda k: self._cache[memory_type][k][1]
+                )
                 del self._cache[memory_type][oldest_id]
-                
+
             self._cache[memory_type][memory_id] = (entry, time.time())
 
     def _clean_expired_cache(self) -> None:
@@ -266,17 +272,17 @@ class MemoryManager:
             # 1. 先准备要写入的内容 (内存操作)
             async with self._lock:
                 content = json.dumps(self.index, indent=2, ensure_ascii=False)
-            
+
             # 2. 获取 IO 锁并写入文件
             async with self._io_lock:
                 # 使用原子写入：先写临时文件再重命名
                 temp_file = self.index_file.with_suffix('.tmp')
                 async with aiofiles.open(temp_file, 'w', encoding='utf-8') as f:
                     await f.write(content)
-                
+
                 # Windows 下 replace 前如果目标文件存在需要处理，但 Path.replace 应该可以处理
                 temp_file.replace(self.index_file)
-                
+
         except (OSError, IOError) as e:
             logger.error(f"保存记忆索引失败 (IO错误): {e}")
             raise MemorySystemError(f"保存记忆索引失败 (IO错误): {str(e)}")
@@ -285,14 +291,16 @@ class MemoryManager:
             raise MemorySystemError(f"保存记忆索引失败 (序列化错误): {str(e)}")
         except Exception as e:
             logger.error(f"保存记忆索引遇到未知错误 ({type(e).__name__}): {e}")
-            raise MemorySystemError(f"保存记忆索引遇到未知错误 ({type(e).__name__}): {str(e)}")
+            raise MemorySystemError(
+                f"保存记忆索引遇到未知错误 ({type(e).__name__}): {str(e)}"
+            )
 
     async def _save_entry(self, entry: MemoryEntry, directory: Path) -> None:
         """通用条目保存方法 (已优化：剥离 IO 锁)"""
         try:
             file_path = directory / f"{entry.memory_id}.json"
             entry_dict = entry.to_dict()
-            
+
             # 1. 先写条目文件 (不占锁)
             async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
                 await f.write(json.dumps(entry_dict, indent=2, ensure_ascii=False))
@@ -301,28 +309,34 @@ class MemoryManager:
             async with self._lock:
                 # 保存到缓存
                 self._save_to_cache(entry.memory_type, entry.memory_id, entry_dict)
-                
+
                 # 更新索引列表
                 if entry.memory_id not in self.index[entry.memory_type]:
                     self.index[entry.memory_type].append(entry.memory_id)
                     self.index["total_count"] += 1
-                
+
                 # 更新类别索引
                 if entry.memory_type in self._category_index:
                     category = entry.metadata.get("category", "general")
                     if category not in self._category_index[entry.memory_type]:
                         self._category_index[entry.memory_type][category] = []
-                    if entry.memory_id not in self._category_index[entry.memory_type][category]:
-                        self._category_index[entry.memory_type][category].append(entry.memory_id)
-            
+                    if entry.memory_id not in \
+                            self._category_index[entry.memory_type][category]:
+                        self._category_index[entry.memory_type][category].append(
+                            entry.memory_id
+                        )
+
             # 3. 异步保存索引文件 (IO 密集，移出主锁)
             await self._save_index()
-                
+
             # 4. 更新监控指标
             MetricsManager.record_memory_op(entry.memory_type, "save", "success")
             # 此时访问 self.index 需要注意并发，但在 record 这种非关键操作中通常 OK
-            MetricsManager.update_memory_size(entry.memory_type, len(self.index[entry.memory_type]))
-            
+            MetricsManager.update_memory_size(
+                entry.memory_type,
+                len(self.index[entry.memory_type])
+            )
+
         except (OSError, IOError, PermissionError) as e:
             logger.error(f"保存记忆条目失败 (文件或磁盘错误): {e}")
             MetricsManager.record_memory_op(entry.memory_type, "save", "error")
@@ -333,7 +347,9 @@ class MemoryManager:
         except Exception as e:
             logger.error(f"保存记忆条目失败 (未知错误 - {type(e).__name__}): {e}")
             MetricsManager.record_memory_op(entry.memory_type, "save", "error")
-            raise MemorySystemError(f"保存记忆条目遇到未知错误 ({type(e).__name__}): {str(e)}")
+            raise MemorySystemError(
+                f"保存记忆条目遇到未知错误 ({type(e).__name__}): {str(e)}"
+            )
 
     # ========== Episodic Memory (情节记忆) ==========
 
@@ -367,6 +383,32 @@ class MemoryManager:
         logger.info(f"保存情节记忆: {memory_id}")
         return memory_id
 
+    async def store_memory(
+        self,
+        content: str,
+        memory_type: str = "episodic",
+        metadata: Optional[Dict] = None
+    ) -> str:
+        """存储记忆 (通用包装器)"""
+        if memory_type == "episodic":
+            return await self.save_episodic_memory(event=content, metadata=metadata)
+        elif memory_type == "semantic":
+            category = metadata.get("category", "general") if metadata else "general"
+            return await self.save_semantic_memory(
+                knowledge=content,
+                category=category,
+                metadata=metadata
+            )
+        elif memory_type == "procedural":
+            category = metadata.get("category", "general") if metadata else "general"
+            return await self.save_procedural_memory(
+                practice=content,
+                category=category,
+                metadata=metadata
+            )
+        else:
+            raise MemorySystemError(f"不支持的记忆类型: {memory_type}")
+
     async def get_episodic_memories(
         self,
         limit: int = 10
@@ -375,7 +417,7 @@ class MemoryManager:
         MetricsManager.record_memory_op("episodic", "query", "start")
         memories = []
         recent_ids = self.index.get("episodic", [])[-limit:]
-        
+
         self._clean_expired_cache()
 
         for memory_id in reversed(recent_ids):
@@ -447,14 +489,14 @@ class MemoryManager:
         else:
             # 否则获取所有语义记忆 ID
             target_ids = self.index.get("semantic", [])
-        
+
         self._clean_expired_cache()
 
         # 批量加载和过滤
         for memory_id in target_ids:
             # 尝试从缓存获取
             entry = self._get_from_cache("semantic", memory_id)
-            
+
             if not entry:
                 file_path = self.semantic_dir / f"{memory_id}.json"
                 if not file_path.exists():
@@ -541,14 +583,14 @@ class MemoryManager:
                         async with aiofiles.open(self.continuity_file, 'r', encoding='utf-8') as f:
                             full_content = await f.read()
                     else:
-                        full_content = "# SuperAgent v3.1 - 持续记忆 (CONTINUITY)\n\n"
+                        full_content = "# SuperAgent v3.2 - 持续记忆 (CONTINUITY)\n\n"
                 else:
                     full_content = self._continuity_cache
 
             # 2. 在内存中处理内容 (不占锁，因为是局部变量)
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             new_entry = f"\n- [{timestamp}] **{category}**: {content}\n"
-            
+
             if category == "mistake" or "mistake" in content.lower():
                 section = SECTION_MISTAKES
             elif memory_type == "procedural":

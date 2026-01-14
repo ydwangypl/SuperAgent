@@ -49,6 +49,7 @@ class ClarificationQuestion:
     options: Optional[List[str]] = None  # 可选项(如果有)
     required: bool = True                # 是否必须回答
     reason: str = ""                     # 为什么问这个问题
+    multiple: bool = False               # 是否允许多选
 
 
 @dataclass

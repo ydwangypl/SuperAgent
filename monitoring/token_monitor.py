@@ -10,7 +10,7 @@ import json
 import logging
 import asyncio
 import aiofiles
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
@@ -43,11 +43,17 @@ class TokenUsageRecord:
 class TokenMonitorConfig:
     """Token监控配置"""
     enabled: bool = True
-    log_file: str = ".superagent/token_usage.jsonl"  # 改为 jsonl 格式
+    log_file: str = ".superagent/token_usage.jsonl"  # 改 forest jsonl 格式
     retention_days: int = 30
     track_compression_savings: bool = True
     track_incremental_savings: bool = True
     track_agent_usage: bool = True
+    
+    # 预算相关
+    enable_budget: bool = False
+    total_budget: int = 1000000
+    warning_threshold: float = 0.8
+    stop_on_exceed: bool = True
 
 
 class TokenMonitor:
@@ -71,10 +77,64 @@ class TokenMonitor:
         self.log_file = self.project_root / self.config.log_file
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
 
+        # 累计使用量
+        self.total_usage = 0
+        self._usage_by_agent = defaultdict(int)
+
         # 异步锁，确保写入顺序
         self._lock = asyncio.Lock()
 
         logger.info(f"Token监控器初始化完成: {self.log_file}")
+
+    async def check_budget(self, estimated_tokens: int = 0) -> Tuple[bool, str]:
+        """检查 Token 预算是否充足
+
+        Args:
+            estimated_tokens: 预估本次需要的 Token 数
+
+        Returns:
+            Tuple[bool, str]: (是否充足, 提示信息)
+        """
+        if not self.config.enable_budget:
+            return True, ""
+
+        projected_usage = self.total_usage + estimated_tokens
+        
+        # 1. 检查是否超过警告阈值
+        warning_limit = self.config.total_budget * self.config.warning_threshold
+        if projected_usage >= warning_limit and self.total_usage < warning_limit:
+            msg = f"⚠️ Token 预算预警: 当前累计使用 {self.total_usage}, 预估后将达到 {projected_usage}, 接近预算上限 {self.config.total_budget}"
+            logger.warning(msg)
+            return True, msg
+
+        # 2. 检查是否超过总预算
+        if projected_usage > self.config.total_budget:
+            msg = f"❌ Token 预算超限: 当前累计使用 {self.total_usage}, 预估后将达到 {projected_usage}, 超过预算上限 {self.config.total_budget}"
+            logger.error(msg)
+            if self.config.stop_on_exceed:
+                return False, msg
+            return True, msg
+
+        return True, ""
+
+    def estimate_tokens(self, content: str, multiplier: float = 1.2) -> int:
+        """粗略估算字符串的 Token 数
+        
+        Args:
+            content: 内容
+            multiplier: 冗余系数,默认为 1.2
+            
+        Returns:
+            int: 估算的 Token 数
+        """
+        if not content:
+            return 0
+        
+        # 经验公式: 1 token ≈ 4 字符 (中文可能更高, 这里取 2 字符 1 token 以保守估计)
+        # 对于中英文混合, 我们取平均值或更保守的估计
+        char_count = len(content)
+        estimated = int(char_count / 2 * multiplier)
+        return estimated
 
     async def log_usage(
         self,
@@ -126,6 +186,10 @@ class TokenMonitor:
             compression_ratio=compression_ratio,
             savings_ratio=savings_ratio
         )
+
+        # 累计使用量
+        self.total_usage += compressed_tokens or original_tokens
+        self._usage_by_agent[agent_type] += compressed_tokens or original_tokens
 
         # 写入日志文件 (异步)
         await self._append_record(record)

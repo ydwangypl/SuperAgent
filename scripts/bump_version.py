@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-版本升级脚本: v3.1 → v3.1
+版本升级脚本: v3.2 → v3.2
 
 升级原因:
-- 完成 P0 核心基础设施 (TaskListManager, GitAutoCommitManager, SingleTaskMode)
-- 63个测试通过 (100%)
-- 添加了核心功能,但保持向后兼容性
+- 完成 P2 阶段核心功能迭代
+- 统一平台适配器枚举 (Platform)
+- 建立 QA 审查与测试方案
+- 解决文档版本不一致问题
 """
 
 import re
@@ -14,6 +15,10 @@ from pathlib import Path
 
 def update_version_in_file(file_path: Path, old_version: str, new_version: str):
     """更新文件中的版本号"""
+    # 跳过存档目录
+    if "archive" in str(file_path).lower():
+        return False
+        
     try:
         content = file_path.read_text(encoding='utf-8')
         new_content = content.replace(old_version, new_version)
@@ -29,8 +34,8 @@ def update_version_in_file(file_path: Path, old_version: str, new_version: str):
 def main():
     """主函数"""
     project_root = Path(__file__).parent.parent
-    old_version = "v3.1"
-    new_version = "v3.1"
+    old_version = "v3.2"
+    new_version = "v3.2"
 
     # 需要更新的文件模式
     patterns = [
@@ -66,8 +71,8 @@ def main():
     print(f"  跳过文件数: {len(skipped_files)}")
     print("\n下一步:")
     print("  1. 检查变更: git diff")
-    print("  2. 提交更新: git commit -am 'chore: bump version to v3.1'")
-    print("  3. 创建标签: git tag v3.1.0")
+    print("  2. 提交更新: git commit -am 'chore: bump version to v3.2'")
+    print("  3. 创建标签: git tag v3.2.0")
 
 if __name__ == "__main__":
     main()

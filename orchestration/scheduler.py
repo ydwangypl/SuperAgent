@@ -6,14 +6,13 @@
 """
 
 import logging
-import asyncio
 from typing import List, Dict, Any, Optional
-from datetime import datetime
 
 from planning.models import ExecutionPlan
 from .models import TaskExecution, TaskStatus, ExecutionPriority
 
 logger = logging.getLogger(__name__)
+
 
 class TaskScheduler:
     """任务调度逻辑抽象"""
@@ -62,6 +61,59 @@ class TaskScheduler:
                 task.status = TaskStatus.READY
                 ready_tasks.append(task)
         return ready_tasks
+
+    async def schedule_and_run(
+        self,
+        plan: ExecutionPlan,
+        executor: Any,
+        worktree_creator_callback: Optional[Any] = None
+    ) -> List[TaskExecution]:
+        """调度并运行整个计划"""
+        # 1. 创建任务执行记录
+        remaining = self.create_task_executions(plan)
+        executed = []
+
+        logger.info(f"调度器开始执行计划: {plan.project_id}, 总任务数: {len(remaining)}")
+
+        # 2. 调度循环
+        while remaining:
+            # 2.1 找出就绪的任务
+            ready_tasks = self.find_ready_tasks(remaining, executed)
+
+            if not ready_tasks:
+                if remaining:
+                    # 如果还有剩余任务但没有就绪任务,说明存在循环依赖
+                    logger.error("检测到循环依赖,无法继续执行")
+                    for t in remaining:
+                        t.status = TaskStatus.FAILED
+                        t.error = "循环依赖导致任务无法就绪"
+                        executed.append(t)
+                    break
+                else:
+                    break
+
+            # 2.2 执行当前批次
+            logger.info(f"调度批次: {len(ready_tasks)} 个就绪任务")
+            batch_results = await self.execute_batch(ready_tasks, worktree_creator_callback)
+
+            # 2.3 更新状态
+            for task in batch_results:
+                executed.append(task)
+                # 从剩余任务中移除
+                remaining = [t for t in remaining if t.task_id != task.task_id]
+
+            # 2.4 检查是否有失败任务(如果配置了失败即停止)
+            if any(t.status == TaskStatus.FAILED for t in batch_results):
+                logger.warning("批次中有任务失败,根据策略停止调度")
+                # 将剩余任务标记为取消
+                for t in remaining:
+                    t.status = TaskStatus.CANCELLED
+                    executed.append(t)
+                remaining = []
+                break
+
+        logger.info(f"计划执行完成: {plan.project_id}, 完成任务: {len(executed)}")
+        return executed
 
     async def execute_batch(
         self,

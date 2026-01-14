@@ -76,6 +76,7 @@ def interactive_select(question, options, multiple=False, allow_manual=True):
         
         # 移动光标回到底部，准备清除
         sys.stdout.write(f"\033[{len(display_options) + 3}A")
+        sys.stdout.flush()
 
     while True:
         render()

@@ -37,18 +37,19 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements-test.txt
 
-    - name: 运行快速测试
+    - name: 运行系统验证 (Fast 模式)
       run: |
-        pytest tests/unit/ -v -m "not slow" --tb=short
+        python scripts/verify_system.py --mode fast
 
-    - name: 运行集成测试
+    - name: 运行系统验证 (Full 模式)
+      if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
       run: |
-        pytest tests/integration/ -v -m "not slow" --tb=short
+        python scripts/verify_system.py --mode full --level 3
 
-    - name: 生成覆盖率报告
+    - name: 生成并上传覆盖率报告
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.10'
       run: |
-        pytest --cov=. --cov-report=xml --cov-report=term -m "not slow"
+        pytest --cov=. --cov-report=xml --cov-report=term
 
     - name: 上传覆盖率到Codecov
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.10'

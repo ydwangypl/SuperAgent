@@ -7,18 +7,31 @@
 from enum import Enum
 
 
+class TaskStatus(Enum):
+    """任务状态"""
+    PENDING = "pending"           # 待执行
+    READY = "ready"               # 就绪(依赖已满足)
+    ASSIGNED = "assigned"         # 已分配给Agent
+    RUNNING = "running"           # 执行中
+    WAITING = "waiting"           # 等待中(等待依赖)
+    COMPLETED = "completed"       # 已完成
+    FAILED = "failed"             # 失败
+    CANCELLED = "cancelled"       # 已取消
+    SKIPPED = "skipped"           # 已跳过
+
+
 class StepStatus(Enum):
-    """步骤状态"""
-    PENDING = "pending"         # 待执行
-    READY = "ready"             # 就绪(依赖已满足)
-    IN_PROGRESS = "in_progress" # 执行中
-    COMPLETED = "completed"     # 已完成
-    FAILED = "failed"           # 失败
-    SKIPPED = "skipped"         # 跳过
+    """步骤状态 (保留兼容性)"""
+    PENDING = "pending"
+    READY = "ready"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
 
 
 class AgentType(Enum):
-    """Agent类型 (v3.1 扩展版)"""
+    """Agent类型 (v3.2 扩展版)"""
     # 核心管理与设计
     PRODUCT_MANAGEMENT = "product-management"
     DATABASE_DESIGN = "database-design"

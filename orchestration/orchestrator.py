@@ -6,28 +6,23 @@
 SuperAgent的核心协调引擎,负责任务编排、Agent调度、执行管理
 """
 
-import asyncio
 import logging
-import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from pathlib import Path
 
-import aiofiles
-from planning.models import ExecutionPlan, Step
-from common.monitoring import MetricsManager, monitor_task_duration
-from common.exceptions import ExecutionError, MemorySystemError, AgentError
+from planning.models import ExecutionPlan
+from common.monitoring import monitor_task_duration
 
 from .base import BaseOrchestrator
 from .models import (
     TaskExecution,
     TaskStatus,
     ExecutionContext,
-    ExecutionResult,
+    ProjectExecutionResult,
     OrchestrationState,
     OrchestrationConfig,
     AgentResource,
-    ExecutionPriority
 )
 from .worktree_manager import GitWorktreeManager
 from .task_executor import TaskExecutor
@@ -40,6 +35,7 @@ from .result_handler import ExecutionResultHandler
 from .worktree_orchestrator import WorktreeOrchestrator
 from .git_manager import GitAutoCommitManager
 from config.settings import SuperAgentConfig, load_config
+from monitoring.token_monitor import TokenMonitor
 
 
 logger = logging.getLogger(__name__)
@@ -76,11 +72,14 @@ class Orchestrator(BaseOrchestrator):
 
         # 3. 初始化外部服务 (Memory & Recovery)
         self.memory_manager = MemoryManager(self.project_root) if MEMORY_AVAILABLE else None
-        self.error_recovery = ErrorRecoverySystem(self.memory_manager) if self.memory_manager else None
+        self.error_recovery = (ErrorRecoverySystem(self.memory_manager)
+                               if self.memory_manager else None)
 
         # 4. 初始化子编排器
-        self.review_orchestrator = ReviewOrchestrator(self.project_root, self.config, self.agent_dispatcher)
-        
+        self.review_orchestrator = ReviewOrchestrator(
+            self.project_root, self.config, self.agent_dispatcher
+        )
+
         # 5. 初始化业务逻辑组件 (解耦核心)
         try:
             worktree_mgr = GitWorktreeManager(self.project_root, self.config.worktree)
@@ -101,6 +100,10 @@ class Orchestrator(BaseOrchestrator):
         if git_config.enabled:
             logger.info("Git 自动提交已启用")
 
+        # 7. 初始化 Token 监控器
+        self.token_monitor = self._init_token_monitor()
+        self.context.token_monitor = self.token_monitor
+
         # 执行状态
         self.state = OrchestrationState(
             project_id=f"project-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
@@ -117,7 +120,7 @@ class Orchestrator(BaseOrchestrator):
                 return executor
             except Exception as e:
                 logger.error(f"分布式任务执行器启动失败: {type(e).__name__}: {e}。自动降级。")
-        
+
         logger.info("本地任务执行器已启用")
         return TaskExecutor(self.context)
 
@@ -132,44 +135,65 @@ class Orchestrator(BaseOrchestrator):
                     max_concurrent=self.config.max_concurrent_per_agent
                 ) for agent_type in AgentType
             }
-        
+
         dispatcher = AgentDispatcher(self.config.agent_resources)
         dispatcher.task_executor = self.task_executor
         return dispatcher
 
+    def _init_token_monitor(self) -> TokenMonitor:
+        """初始化 Token 监控器"""
+        # 优先使用全局配置中的监控设置
+        monitor_config = self.global_config.token_monitor
+
+        # 将编排配置中的预算设置同步到监控器配置
+        if self.config.token_budget.enabled:
+            monitor_config.enable_budget = True
+            monitor_config.total_budget = self.config.token_budget.total_budget
+            monitor_config.warning_threshold = self.config.token_budget.warning_threshold
+            monitor_config.stop_on_exceed = self.config.token_budget.stop_on_exceed
+
+        # 转换为 TokenMonitor 内部使用的配置类 (如果需要)
+        # 注意: 这里假设 config/settings.py 中的 TokenMonitorConfig 和 monitoring/token_monitor.py 中的兼容
+        return TokenMonitor(
+            project_root=self.project_root,
+            config=monitor_config
+        )
+
     @monitor_task_duration(agent_type="orchestrator")
-    async def execute_plan(self, plan: ExecutionPlan) -> ExecutionResult:
-        """
-        执行完整的项目计划。
-        
-        该方法是 Orchestrator 的核心入口，执行流程包括：
-        1. 初始化执行上下文和状态统计。
-        2. 查询相关历史记忆以优化当前执行。
-        3. 委托 Scheduler 创建具体的任务执行对象。
-        4. 按依赖关系并行或串行执行任务，并为敏感任务创建隔离的 Worktree。
-        5. 委托 ResultHandler 汇总执行结果。
-        6. 调用 ReviewOrchestrator 进行自动化代码审查。
-        7. 清理临时资源（如 Worktree）。
-        8. 在执行失败时，通过 ErrorRecoverySystem 记录教训并存入记忆。
+    async def execute_plan(self, plan: ExecutionPlan) -> ProjectExecutionResult:
+        """执行完整的项目计划 (重构版 - 关注点分离)"""
+        self._initialize_execution_state(plan)
+        result = self._create_initial_result()
 
-        Args:
-            plan: 经过规划器生成的 ExecutionPlan 对象。
+        try:
+            # 1. 准备阶段 (记忆与任务创建)
+            await self._prepare_execution(plan)
 
-        Returns:
-            ExecutionResult: 包含执行进度、成功标志、审查报告和错误信息的汇总对象。
+            # 2. 执行阶段 (核心循环)
+            task_executions = self.scheduler.create_task_executions(plan)
+            executed_tasks = await self._execute_by_dependencies(task_executions, plan)
 
-        Raises:
-            ExecutionError: 核心流程执行异常。
-            MemorySystemError: 记忆系统操作异常。
-        """
+            # 3. 汇总与审查阶段
+            result = self.result_handler.collect_results(executed_tasks)
+            await self._finalize_execution(result, executed_tasks)
+
+        except Exception as e:
+            await self._handle_execution_error(e, plan, result)
+        finally:
+            self._cleanup_execution(result)
+
+        return result
+
+    def _initialize_execution_state(self, plan: ExecutionPlan) -> None:
+        """初始化执行状态"""
         logger.info(f"开始执行项目计划: {self.state.project_id} (步骤数: {len(plan.steps)})")
-
         self.state.status = TaskStatus.RUNNING
         self.state.started_at = datetime.now()
         self.state.total_tasks = len(plan.steps)
-        
-        # 预先初始化结果对象，防止异常时未定义
-        result = ExecutionResult(
+
+    def _create_initial_result(self) -> ProjectExecutionResult:
+        """创建初始结果对象"""
+        return ProjectExecutionResult(
             success=False,
             project_id=self.state.project_id,
             total_tasks=self.state.total_tasks,
@@ -177,148 +201,114 @@ class Orchestrator(BaseOrchestrator):
             failed_tasks=0
         )
 
-        try:
-            # 步骤0: 查询相关记忆
-            if self.memory_manager:
-                await self.memory_manager.query_relevant_memory(task=plan.description, agent_type=None)
+    async def _prepare_execution(self, plan: ExecutionPlan) -> None:
+        """执行前准备工作"""
+        if self.memory_manager:
+            await self.memory_manager.query_relevant_memory(task=plan.description, agent_type=None)
 
-            # 步骤1: 创建任务执行对象 (委托给 Scheduler)
-            task_executions = self.scheduler.create_task_executions(plan)
+    async def _finalize_execution(
+        self,
+        result: ProjectExecutionResult,
+        executed_tasks: List[TaskExecution]
+    ) -> None:
+        """完成执行后的汇总与审查"""
+        # 代码审查
+        result.code_review_summary = await self.review_orchestrator.run_review(
+            self.state.project_id, executed_tasks
+        )
 
-            # 步骤2: 按依赖关系分组执行 (核心循环)
-            executed_tasks = await self._execute_by_dependencies(task_executions, plan)
+        # 资源清理
+        if self.config.worktree.auto_cleanup:
+            await self.worktree_orchestrator.cleanup_all()
 
-            # 步骤3: 收集结果 (委托给 ResultHandler)
-            result = self.result_handler.collect_results(executed_tasks)
-
-            # 步骤4: 代码审查
-            result.code_review_summary = await self.review_orchestrator.run_review(
-                self.state.project_id, executed_tasks
-            )
-
-            # 步骤5: 清理 (委托给 WorktreeOrchestrator)
-            if self.config.worktree.auto_cleanup:
-                await self.worktree_orchestrator.cleanup_all()
-
-        except Exception as e:
-            logger.error(f"执行计划失败 ({type(e).__name__}): {e}")
-            result.success = False
-            result.errors.append(str(e))
-            result.completed_tasks = self.state.completed_tasks
-            result.failed_tasks = self.state.failed_tasks
-            
-            if self.memory_manager:
-                # 增强监控元数据
-                error_context = (
-                    f"项目执行: {self.state.project_id}\n"
-                    f"任务描述: {plan.description}\n"
-                    f"状态统计: 已完成 {self.state.completed_tasks}, 失败 {self.state.failed_tasks}, 总计 {self.state.total_tasks}\n"
-                    f"运行时长: {(datetime.now() - self.state.started_at).total_seconds():.2f}s"
-                )
-                
-                learning = (
-                    f"在项目 {self.state.project_id} 执行期间发生非预期异常。\n"
-                    f"执行进度: {self.state.completed_tasks}/{self.state.total_tasks}\n"
-                    f"异常详情: {str(e)}"
-                )
-                
-                await self.memory_manager.save_mistake(
-                    error=e, 
-                    context=error_context,
-                    fix="检查系统日志，分析执行过程中的具体失败点并尝试手动恢复或调整计划。",
-                    learning=learning
-                )
-        finally:
-            self.state.completed_at = datetime.now()
-            self.state.status = TaskStatus.COMPLETED
-            result.completed_at = self.state.completed_at
-
+    def _cleanup_execution(self, result: ProjectExecutionResult) -> None:
+        """最后的收尾清理"""
+        self.state.completed_at = datetime.now()
+        self.state.status = TaskStatus.COMPLETED
+        result.completed_at = self.state.completed_at
         result.success = (result.failed_tasks == 0 and result.completed_tasks == result.total_tasks)
-        logger.info(f"计划执行完成: {result.completed_tasks}/{result.total_tasks} 成功, 耗时 {result.duration_seconds}s")
-        return result
+
+        logger.info(
+            f"计划执行完成: {result.completed_tasks}/{result.total_tasks} 成功, "
+            f"耗时 {result.duration_seconds}s"
+        )
+
+    async def _handle_execution_error(
+        self,
+        e: Exception,
+        plan: ExecutionPlan,
+        result: ProjectExecutionResult
+    ) -> None:
+        """统一错误处理逻辑"""
+        logger.error(f"执行计划失败 ({type(e).__name__}): {e}")
+        result.success = False
+        result.errors.append(str(e))
+        result.completed_tasks = self.state.completed_tasks
+        result.failed_tasks = self.state.failed_tasks
+
+        if self.memory_manager:
+            await self._record_error_to_memory(e, plan)
+
+    async def _record_error_to_memory(self, e: Exception, plan: ExecutionPlan) -> None:
+        """记录错误到记忆系统"""
+        error_context = (
+            f"项目执行: {self.state.project_id}\n"
+            f"任务描述: {plan.description}\n"
+            f"状态统计: 已完成 {self.state.completed_tasks}, "
+            f"失败 {self.state.failed_tasks}, 总计 {self.state.total_tasks}\n"
+            f"运行时长: {(datetime.now() - self.state.started_at).total_seconds():.2f}s"
+        )
+
+        learning = (
+            f"在项目 {self.state.project_id} 执行期间发生非预期异常。\n"
+            f"执行进度: {self.state.completed_tasks}/{self.state.total_tasks}\n"
+            f"异常详情: {str(e)}"
+        )
+
+        await self.memory_manager.save_mistake(
+            error=e,
+            context=error_context,
+            fix="检查系统日志，分析执行过程中的具体失败点并尝试手动恢复或调整计划。",
+            learning=learning
+        )
 
     async def _execute_by_dependencies(
         self,
         tasks: List[TaskExecution],
         plan: ExecutionPlan
     ) -> List[TaskExecution]:
-        """按依赖关系执行任务 (重构版)"""
+        """按依赖关系执行任务 (重构版 - 职责分离)"""
         executed = []
         remaining = tasks.copy()
 
         while remaining:
+            # 1. Token 预算检查
+            if not await self._check_token_budget_for_remaining(remaining, executed):
+                break
+
+            # 2. 获取就绪任务
             ready_tasks = self.scheduler.find_ready_tasks(remaining, executed)
             if not ready_tasks:
-                if remaining: logger.error("检测到可能的循环依赖")
+                if remaining:
+                    logger.error("检测到可能的循环依赖")
                 break
 
             logger.info(f"执行批次: {len(ready_tasks)} 个任务")
-            
-            # 定义 Worktree 创建回调
-            async def create_wt(task):
-                step = plan.get_step_by_id(task.step_id)
-                if step: await self.worktree_orchestrator.create_for_task(task, step.agent_type.value)
 
-            # 执行批次 (委托给 Scheduler)
-            batch_results = await self.scheduler.execute_batch(ready_tasks, worktree_creator_callback=create_wt)
+            # 3. 执行批次任务
+            batch_results = await self._execute_task_batch(ready_tasks, plan)
 
-            # 后处理: 同步 Worktree + 保存记忆 + 范围验证 + Git提交 + 更新状态
-            for task in batch_results:
-                await self.worktree_orchestrator.sync_to_root(task)
-                await self.result_handler.save_task_memory(task, plan.description)
-
-                # 单任务焦点模式: 验证任务范围
-                if self.config.single_task_mode.enabled and task.status == TaskStatus.COMPLETED:
-                    is_valid, reason = self._validate_task_scope(task)
-                    if not is_valid:
-                        logger.warning(f"任务 {task.task_id} 超出单任务模式限制: {reason}")
-
-                        # 尝试自动拆分任务
-                        if self.config.single_task_mode.enable_auto_split:
-                            split_task = await self._split_task(task, reason)
-                            if split_task:
-                                logger.info(f"任务 {task.task_id} 已自动拆分")
-                                # 更新任务状态
-                                task.status = TaskStatus.COMPLETED
-                                task.outputs["split_info"] = {
-                                    "reason": reason,
-                                    "split_task_id": split_task.task_id
-                                }
-                            else:
-                                logger.error(f"任务 {task.task_id} 拆分失败")
-                                task.status = TaskStatus.FAILED
-                                task.error = reason
-                        else:
-                            # 不允许自动拆分,标记为失败
-                            task.status = TaskStatus.FAILED
-                            task.error = reason
-
-                # Git 自动提交 (如果启用)
-                if self.git_manager and self.config.git_auto_commit.enabled:
-                    step = plan.get_step_by_id(task.step_id)
-                    if step and task.status == TaskStatus.COMPLETED:
-                        # 收集变更文件 (从任务输出中获取)
-                        changed_files = task.outputs.get("modified_files", [])
-                        if isinstance(changed_files, str):
-                            changed_files = [changed_files]
-
-                        # 如果没有明确列出文件,暂存所有变更
-                        if not changed_files:
-                            logger.debug(f"任务 {task.task_id} 未指定变更文件,跳过自动提交")
-                        else:
-                            await self.git_manager.commit_task(
-                                task_id=task.task_id,
-                                description=step.description,
-                                changed_files=changed_files,
-                                summary=step.details if hasattr(step, 'details') else None
-                            )
+            # 4. 批次后处理 (同步, 记忆, 验证, Git提交)
+            await self._process_batch_results(batch_results, plan)
 
             executed.extend(batch_results)
             remaining = [t for t in remaining if t not in batch_results]
             self.result_handler.update_state(executed)
 
-            # 快速失败逻辑
-            if self.config.enable_early_failure and any(t.status == TaskStatus.FAILED for t in batch_results):
+            # 5. 快速失败逻辑
+            if self.config.enable_early_failure and any(
+                t.status == TaskStatus.FAILED for t in batch_results
+            ):
                 logger.error("检测到任务失败, 停止后续执行")
                 for task in remaining:
                     task.status = TaskStatus.SKIPPED
@@ -326,6 +316,104 @@ class Orchestrator(BaseOrchestrator):
                 break
 
         return executed
+
+    async def _check_token_budget_for_remaining(
+        self,
+        remaining: List[TaskExecution],
+        executed: List[TaskExecution]
+    ) -> bool:
+        """检查剩余任务的 Token 预算"""
+        total_estimated = 0
+        for task in remaining:
+            task_content = task.description or ""
+            total_estimated += self.token_monitor.estimate_tokens(task_content) + 2000
+
+        is_sufficient, budget_msg = await self.token_monitor.check_budget(total_estimated)
+        if not is_sufficient:
+            logger.error(f"由于 Token 预算限制，停止执行: {budget_msg}")
+            for task in remaining:
+                task.status = TaskStatus.FAILED
+                task.error = budget_msg
+            executed.extend(remaining)
+            return False
+        elif budget_msg:
+            self.add_log(f"预算提示: {budget_msg}")
+        return True
+
+    async def _execute_task_batch(
+        self,
+        ready_tasks: List[TaskExecution],
+        plan: ExecutionPlan
+    ) -> List[TaskExecution]:
+        """执行一批就绪任务"""
+        async def create_wt(task):
+            step = plan.get_step_by_id(task.step_id)
+            if step:
+                await self.worktree_orchestrator.create_for_task(task, step.agent_type.value)
+
+        return await self.scheduler.execute_batch(ready_tasks, worktree_creator_callback=create_wt)
+
+    async def _process_batch_results(
+        self,
+        batch_results: List[TaskExecution],
+        plan: ExecutionPlan
+    ):
+        """对批次执行结果进行后处理"""
+        for task in batch_results:
+            # 同步 Worktree
+            await self.worktree_orchestrator.sync_to_root(task)
+
+            # 保存任务记忆
+            await self.result_handler.save_task_memory(task, plan.description)
+
+            # 单任务焦点模式验证
+            await self._handle_single_task_mode_validation(task)
+
+            # Git 自动提交
+            await self._handle_git_auto_commit(task, plan)
+
+    async def _handle_single_task_mode_validation(self, task: TaskExecution):
+        """处理单任务焦点模式的验证与自动拆分"""
+        if self.config.single_task_mode.enabled and task.status == TaskStatus.COMPLETED:
+            is_valid, reason = self._validate_task_scope(task)
+            if not is_valid:
+                logger.warning(f"任务 {task.task_id} 超出单任务模式限制: {reason}")
+
+                if self.config.single_task_mode.enable_auto_split:
+                    split_task = await self._split_task(task, reason)
+                    if split_task:
+                        logger.info(f"任务 {task.task_id} 已自动拆分")
+                        task.status = TaskStatus.COMPLETED
+                        task.outputs["split_info"] = {
+                            "reason": reason,
+                            "split_task_id": split_task.task_id
+                        }
+                    else:
+                        logger.error(f"任务 {task.task_id} 拆分失败")
+                        task.status = TaskStatus.FAILED
+                        task.error = reason
+                else:
+                    task.status = TaskStatus.FAILED
+                    task.error = reason
+
+    async def _handle_git_auto_commit(self, task: TaskExecution, plan: ExecutionPlan):
+        """处理 Git 自动提交"""
+        if self.git_manager and self.config.git_auto_commit.enabled:
+            step = plan.get_step_by_id(task.step_id)
+            if step and task.status == TaskStatus.COMPLETED:
+                changed_files = task.outputs.get("modified_files", [])
+                if isinstance(changed_files, str):
+                    changed_files = [changed_files]
+
+                if not changed_files:
+                    logger.debug(f"任务 {task.task_id} 未指定变更文件,跳过自动提交")
+                else:
+                    await self.git_manager.commit_task(
+                        task_id=task.task_id,
+                        description=step.description,
+                        changed_files=changed_files,
+                        summary=step.details if hasattr(step, 'details') else None
+                    )
 
     def get_status(self) -> OrchestrationState:
         """获取当前编排状态"""

@@ -9,7 +9,7 @@ import logging
 import asyncio
 import aiofiles
 from pathlib import Path
-from typing import List, Any, Optional
+from typing import Optional
 
 from .base import BaseOrchestrator
 from .models import TaskExecution, TaskStatus, OrchestrationConfig
@@ -19,12 +19,13 @@ from common.exceptions import SecurityError
 
 logger = logging.getLogger(__name__)
 
+
 class WorktreeOrchestrator(BaseOrchestrator):
     """Worktree 业务逻辑封装"""
 
     def __init__(
-        self, 
-        project_root: Path, 
+        self,
+        project_root: Path,
         worktree_manager: Optional[GitWorktreeManager] = None,
         config: Optional[OrchestrationConfig] = None
     ) -> None:
@@ -46,7 +47,7 @@ class WorktreeOrchestrator(BaseOrchestrator):
 
         # 审计优化: 定义需要隔离的 Agent 类型
         isolated_agents = [
-            "backend-dev", "frontend-dev", "database-design", 
+            "backend-dev", "frontend-dev", "database-design",
             "full-stack-dev", "qa-engineering", "code-refactoring",
             "devops-engineering", "mini-program-dev"
         ]
@@ -81,7 +82,7 @@ class WorktreeOrchestrator(BaseOrchestrator):
                     # 验证路径安全性
                     dest_path = self._validate_path(rel_path)
                     src_path = task.worktree_path / rel_path
-                    
+
                     if src_path.exists() and src_path.is_file():
                         dest_path.parent.mkdir(parents=True, exist_ok=True)
                         async with aiofiles.open(src_path, 'rb') as src, \
@@ -91,7 +92,7 @@ class WorktreeOrchestrator(BaseOrchestrator):
                 except (ValueError, SecurityError) as e:
                     logger.warning(f"跳过不安全或无效的路径 {rel_path}: {e}")
                     continue
-            
+
             logger.info(f"任务 {task.task_id} 成果同步完成")
         except Exception as e:
             logger.error(f"同步任务 {task.task_id} 失败 ({type(e).__name__}): {e}")

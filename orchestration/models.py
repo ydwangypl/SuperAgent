@@ -7,23 +7,42 @@
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Set
+from typing import List, Dict, Any, Optional
 from enum import Enum
 from datetime import datetime
 from pathlib import Path
 
 
-class TaskStatus(Enum):
-    """任务状态"""
-    PENDING = "pending"           # 待执行
-    READY = "ready"               # 就绪(依赖已满足)
-    ASSIGNED = "assigned"         # 已分配给Agent
-    RUNNING = "running"           # 执行中
-    WAITING = "waiting"           # 等待中(等待依赖)
-    COMPLETED = "completed"       # 已完成
-    FAILED = "failed"             # 失败
-    CANCELLED = "cancelled"       # 已取消
-    SKIPPED = "skipped"           # 已跳过
+from common.models import TaskStatus
+from core.executor import ExecutionResult
+
+
+TaskExecutionResult = ExecutionResult
+
+
+# ========== 默认配置常量 ==========
+# 并发与重试
+DEFAULT_MAX_PARALLEL_TASKS = 3
+DEFAULT_MAX_CONCURRENT_PER_AGENT = 2
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_RETRY_DELAY = 5  # 秒
+
+# 超时设置
+DEFAULT_TASK_TIMEOUT = 3600   # 1小时
+DEFAULT_TOTAL_TIMEOUT = 7200  # 2小时
+
+# Token 预算
+DEFAULT_TOTAL_TOKEN_BUDGET = 1000000
+DEFAULT_TOKEN_WARNING_THRESHOLD = 0.8
+
+# 代码审查
+DEFAULT_MIN_OVERALL_SCORE = 70.0
+DEFAULT_MAX_CRITICAL_ISSUES = 0
+DEFAULT_MAX_ITERATIONS = 3
+
+# 单任务模式限制
+DEFAULT_SINGLE_TASK_MAX_FILES = 5
+DEFAULT_SINGLE_TASK_MAX_FILE_SIZE_KB = 100
 
 
 class ExecutionPriority(Enum):
@@ -42,6 +61,7 @@ class ExecutionContext:
     environment: Dict[str, str] = field(default_factory=dict)  # 环境变量
     dependencies: Dict[str, Any] = field(default_factory=dict)  # 依赖项
     metadata: Dict[str, Any] = field(default_factory=dict)      # 元数据
+    token_monitor: Optional[Any] = None                        # Token 监控器 (Phase 3 优化)
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为可序列化的字典"""
@@ -58,11 +78,11 @@ class ExecutionContext:
         """从字典重建对象"""
         if not data:
             return None
-        
+
         # 转换路径
         project_root = Path(data["project_root"])
         worktree_path = Path(data["worktree_path"]) if data.get("worktree_path") else None
-        
+
         return cls(
             project_root=project_root,
             worktree_path=worktree_path,
@@ -96,7 +116,7 @@ class AgentAssignment:
         """从字典重建对象"""
         if not data:
             return None
-            
+
         return cls(
             agent_type=data["agent_type"],
             agent_id=data["agent_id"],
@@ -124,7 +144,7 @@ class TaskExecution:
     assignment: Optional[AgentAssignment] = None
 
     # 执行结果
-    result: Optional[Dict[str, Any]] = None
+    result: Optional[TaskExecutionResult] = None
     inputs: Dict[str, Any] = field(default_factory=dict)     # 任务输入数据
     outputs: Dict[str, Any] = field(default_factory=dict)    # 任务输出数据
     error: Optional[str] = None
@@ -166,7 +186,7 @@ class TaskExecution:
         """从字典重建对象"""
         if not data:
             return None
-            
+
         return cls(
             task_id=data["task_id"],
             step_id=data["step_id"],
@@ -174,9 +194,12 @@ class TaskExecution:
             priority=ExecutionPriority(data["priority"]),
             worktree_path=Path(data["worktree_path"]) if data.get("worktree_path") else None,
             created_at=datetime.fromisoformat(data["created_at"]),
-            started_at=datetime.fromisoformat(data["started_at"]) if data.get("started_at") else None,
-            completed_at=datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None,
-            assignment=AgentAssignment.from_dict(data["assignment"]) if data.get("assignment") else None,
+            started_at=(datetime.fromisoformat(data["started_at"])
+                        if data.get("started_at") else None),
+            completed_at=(datetime.fromisoformat(data["completed_at"])
+                          if data.get("completed_at") else None),
+            assignment=(AgentAssignment.from_dict(data["assignment"])
+                        if data.get("assignment") else None),
             result=data.get("result"),
             inputs=data.get("inputs", {}),
             outputs=data.get("outputs", {}),
@@ -251,29 +274,40 @@ class GitAutoCommitConfig:
 
 @dataclass
 class SingleTaskConfig:
-    """单任务焦点模式配置"""
-    enabled: bool = True                        # 是否启用单任务焦点模式
+    """单任务模式配置"""
+    enabled: bool = True                        # 是否启用单任务模式
     max_parallel_tasks: int = 1                 # 最大并行任务数(单任务模式通常为1)
-    max_files_per_task: int = 5                 # 每个任务最多修改的文件数
-    max_file_size_kb: int = 100                 # 单个文件最大大小(KB)
+    max_files_per_task: int = DEFAULT_SINGLE_TASK_MAX_FILES                 # 每个任务最多修改的文件数
+    max_file_size_kb: int = DEFAULT_SINGLE_TASK_MAX_FILE_SIZE_KB                 # 单个文件最大大小(KB)
     force_incremental: bool = True              # 强制增量执行(一次只执行一个任务)
     enable_auto_split: bool = True              # 启用自动任务拆分
+
+
+@dataclass
+class TokenBudgetConfig:
+    """Token 预算配置"""
+    enabled: bool = False                       # 是否启用 Token 预算控制
+    total_budget: int = DEFAULT_TOTAL_TOKEN_BUDGET                 # 总 Token 预算 (默认 100万)
+    # 警告阈值 (0.8 表示达到 80% 预算时发出警告)
+    warning_threshold: float = DEFAULT_TOKEN_WARNING_THRESHOLD
+    stop_on_exceed: bool = True                 # 超过预算时是否停止执行
+    cost_per_1k_tokens: float = 0.0             # 每 1000 Token 的预估成本 (可选)
 
 
 @dataclass
 class OrchestrationConfig:
     """编排配置"""
     # 并发配置
-    max_parallel_tasks: int = 3                 # 最大并行任务数
-    max_concurrent_per_agent: int = 2           # 每个Agent最大并发数
+    max_parallel_tasks: int = DEFAULT_MAX_PARALLEL_TASKS                 # 最大并行任务数
+    max_concurrent_per_agent: int = DEFAULT_MAX_CONCURRENT_PER_AGENT           # 每个Agent最大并发数
 
     # 重试配置
-    max_retries: int = 3                        # 最大重试次数
-    retry_delay: int = 5                        # 重试延迟(秒)
+    max_retries: int = DEFAULT_MAX_RETRIES                        # 最大重试次数
+    retry_delay: int = DEFAULT_RETRY_DELAY                        # 重试延迟(秒)
 
     # 超时配置
-    task_timeout: int = 3600                    # 任务超时(秒,默认1小时)
-    total_timeout: int = 7200                   # 总超时(秒,默认2小时)
+    task_timeout: int = DEFAULT_TASK_TIMEOUT                    # 任务超时(秒,默认1小时)
+    total_timeout: int = DEFAULT_TOTAL_TIMEOUT                   # 总超时(秒,默认2小时)
 
     # Worktree配置
     worktree: WorktreeConfig = field(default_factory=WorktreeConfig)
@@ -292,9 +326,10 @@ class OrchestrationConfig:
     enable_security_check: bool = True          # 启用安全检查
     enable_performance_check: bool = True       # 启用性能检查
     enable_best_practices: bool = True          # 启用最佳实践检查
-    enable_ralph_wiggum: bool = True            # ✅ 启用 Ralph Wiggum 迭代改进
-    min_overall_score: float = 70.0             # 最低综合评分要求
-    max_critical_issues: int = 0                # 最大严重问题数(0为不允许)
+    enable_ralph_wiggum: bool = False           # 迭代改进循环 (Phase 3 优化)
+    max_iterations: int = DEFAULT_MAX_ITERATIONS                # 最大迭代次数
+    min_overall_score: float = DEFAULT_MIN_OVERALL_SCORE             # 最低综合评分要求
+    max_critical_issues: int = DEFAULT_MAX_CRITICAL_ISSUES                # 最大严重问题数(0为不允许)
 
     # Git 自动提交配置
     git_auto_commit: GitAutoCommitConfig = field(default_factory=GitAutoCommitConfig)
@@ -302,10 +337,13 @@ class OrchestrationConfig:
     # 单任务焦点模式配置
     single_task_mode: SingleTaskConfig = field(default_factory=SingleTaskConfig)
 
+    # Token 预算配置
+    token_budget: TokenBudgetConfig = field(default_factory=TokenBudgetConfig)
+
 
 @dataclass
-class ExecutionResult:
-    """执行结果"""
+class ProjectExecutionResult:
+    """项目级执行结果"""
     success: bool                               # 是否成功
     project_id: str                             # 项目ID
     total_tasks: int                            # 总任务数

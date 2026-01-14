@@ -8,6 +8,7 @@ Agent调度器
 
 import asyncio
 import logging
+import uuid
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
@@ -31,7 +32,9 @@ class AgentDispatcher:
 
     def __init__(self, agent_resources: Optional[Dict[str, AgentResource]] = None) -> None:
         """初始化Agent调度器"""
-        self.agent_resources: Dict[str, AgentResource] = agent_resources or self._init_resources_from_registry()
+        self.agent_resources: Dict[str, AgentResource] = (
+            agent_resources or self._init_resources_from_registry()
+        )
         self.task_executor: Optional[TaskExecutor] = None
         self.assignments: Dict[str, AgentAssignment] = {}
         self._lock: asyncio.Lock = asyncio.Lock()
@@ -55,17 +58,20 @@ class AgentDispatcher:
     ) -> Optional[AgentAssignment]:
         """为任务分配Agent (优化类型识别)"""
         start_time = datetime.now()
-        
+
         async with self._resource_available:
             # 1. 确定目标 Agent 类型 (支持字符串和枚举)
             agent_type_val = preferred_agent
-            
+
             if not agent_type_val:
                 agent_type_val = task.inputs.get("agent_type")
-                
+
             if not agent_type_val:
                 agent_type_val = getattr(task, 'agent_type', None)
-                
+
+            if not agent_type_val:
+                agent_type_val = getattr(task, 'agent_type', None)
+
             if not agent_type_val:
                 metadata = getattr(task, 'metadata', {})
                 if isinstance(metadata, dict):
@@ -74,7 +80,7 @@ class AgentDispatcher:
             # 2. 规范化为字符串值
             if isinstance(agent_type_val, AgentType):
                 agent_type_val = agent_type_val.value
-            
+
             if not agent_type_val:
                 logger.error(f"无法确定任务 {task.task_id} 的Agent类型")
                 return None
@@ -98,12 +104,17 @@ class AgentDispatcher:
                 if timeout is not None:
                     elapsed = (datetime.now() - start_time).total_seconds()
                     if elapsed >= timeout:
-                        logger.warning(f"任务 {task.task_id} 等待 Agent {agent_type_val} 资源超时")
+                        logger.warning(
+                            f"任务 {task.task_id} 等待 Agent {agent_type_val} 资源超时"
+                        )
                         return None
-                    
+
                     wait_time = timeout - elapsed
                     try:
-                        await asyncio.wait_for(self._resource_available.wait(), timeout=wait_time)
+                        await asyncio.wait_for(
+                            self._resource_available.wait(),
+                            timeout=wait_time
+                        )
                     except asyncio.TimeoutError:
                         return None
                 else:
@@ -128,7 +139,12 @@ class AgentDispatcher:
             )
             return assignment
 
-    async def release_agent(self, task_id: str, success: bool = True, duration: float = 0.0) -> None:
+    async def release_agent(
+        self,
+        task_id: str,
+        success: bool = True,
+        duration: float = 0.0
+    ) -> None:
         """释放Agent资源并更新统计信息
 
         Args:
@@ -148,21 +164,23 @@ class AgentDispatcher:
             if agent_type in self.agent_resources:
                 resource = self.agent_resources[agent_type]
                 resource.current_load = max(0, resource.current_load - 1)
-                
+
                 if success:
                     resource.successful_executions += 1
                 else:
                     resource.failed_executions += 1
-                
+
                 # 更新平均时长
                 if resource.average_duration is None:
                     resource.average_duration = duration
                 else:
                     # 移动平均算法
-                    total_done = resource.successful_executions + resource.failed_executions
+                    total_done = (resource.successful_executions +
+                                  resource.failed_executions)
                     if total_done > 1:
                         resource.average_duration = (
-                            (resource.average_duration * (total_done - 1) + duration) / total_done
+                            (resource.average_duration * (total_done - 1) + duration) /
+                            total_done
                         )
                     else:
                         resource.average_duration = duration

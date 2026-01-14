@@ -203,8 +203,14 @@ class GitAutoCommitManager:
                     self.repo.index.add([str(full_path)])
                 else:
                     # 使用 subprocess
+                    # 获取相对路径
+                    try:
+                        rel_path = Path(file_path).relative_to(self.project_root)
+                    except ValueError:
+                        rel_path = file_path
+
                     subprocess.run(
-                        ["git", "add", str(full_path)],
+                        ["git", "add", str(rel_path)],
                         cwd=self.project_root,
                         capture_output=True,
                         check=True
@@ -309,24 +315,110 @@ class GitAutoCommitManager:
                     })
             else:
                 # 使用 subprocess
+                # 尝试获取 log
+                # 使用 --no-pager 确保不分页
+                # 1. 尝试使用 rev-list 获取基本信息 (最可靠)
                 result = subprocess.run(
-                    ["git", "log", f"--max-count={limit}", "--pretty=format:%H|%s|%an|%ci"],
+                    ["git", "--no-pager", "rev-list", "--pretty=oneline", "-n", str(limit), "HEAD"],
                     cwd=self.project_root,
                     capture_output=True,
                     text=True,
-                    check=True
+                    encoding='utf-8',
+                    errors='replace',
+                    check=False
                 )
 
-                for line in result.stdout.strip().split("\n"):
-                    if line:
-                        parts = line.split("|")
-                        if len(parts) == 4:
+                if result.returncode == 0 and result.stdout.strip():
+                    lines = result.stdout.strip().split("\n")
+                    for i in range(0, len(lines)):
+                        line = lines[i].strip()
+                        if line.startswith("commit "):
+                            continue
+                        parts = line.split(maxsplit=1)
+                        if len(parts) >= 1:
                             history.append({
-                                "hash": parts[0],
-                                "message": parts[1],
-                                "author": parts[2],
-                                "date": parts[3]
+                                "hash": parts[0][:7],
+                                "message": parts[1] if len(parts) > 1 else "no message",
+                                "author": "unknown",
+                                "date": "unknown"
                             })
+                    if history:
+                        return history
+
+                # 2. 尝试使用 log --oneline
+                result = subprocess.run(
+                    ["git", "--no-pager", "log", "-n", str(limit), "--oneline"],
+                    cwd=self.project_root,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace',
+                    check=False
+                )
+
+                if result.returncode == 0 and result.stdout.strip():
+                    for line in result.stdout.strip().split("\n"):
+                        if line:
+                            parts = line.split(maxsplit=1)
+                            if len(parts) >= 1:
+                                history.append({
+                                    "hash": parts[0],
+                                    "message": parts[1] if len(parts) > 1 else "no message",
+                                    "author": "unknown",
+                                    "date": "unknown"
+                                })
+                    if history:
+                        return history
+
+                # 3. 尝试详细格式
+                result = subprocess.run(
+                    ["git", "--no-pager", "log", "-n", str(limit), "--pretty=format:%H|%s|%an|%ci"],
+                    cwd=self.project_root,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace',
+                    check=False
+                )
+
+                if result.returncode == 0 and result.stdout.strip():
+                    for line in result.stdout.strip().split("\n"):
+                        if line:
+                            parts = line.split("|")
+                            if len(parts) >= 4:
+                                history.append({
+                                    "hash": parts[0][:7],
+                                    "message": parts[1],
+                                    "author": parts[2],
+                                    "date": parts[3]
+                                })
+                    if history:
+                        return history
+
+                # 如果都失败了,进行最后的诊断
+                check_head = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=self.project_root,
+                    capture_output=True,
+                    text=True,
+                    check=False
+                )
+
+                if check_head.returncode == 0:
+                    count_res = subprocess.run(
+                        ["git", "rev-list", "--count", "HEAD"],
+                        cwd=self.project_root,
+                        capture_output=True,
+                        text=True,
+                        check=False
+                    )
+                    count = count_res.stdout.strip() if count_res.returncode == 0 else "unknown"
+                    logger.warning(
+                        f"Git 仓库存在 HEAD (提交数: {count}) 但无法获取 log 详情. "
+                        f"Root: {self.project_root}"
+                    )
+                else:
+                    logger.warning(f"Git 仓库可能尚未初始化或没有提交. Root: {self.project_root}")
 
         except Exception as e:
             logger.error(f"获取提交历史失败: {e}")
@@ -365,7 +457,11 @@ class GitAutoCommitManager:
                         capture_output=True,
                         text=True
                     )
-                    status["branch"] = result.stdout.strip() if result.returncode == 0 else None
+                    status["branch"] = (
+                        result.stdout.strip()
+                        if (result.returncode == 0 and result.stdout)
+                        else None
+                    )
 
                 # 获取最新提交
                 history = self.get_commit_history(limit=1)

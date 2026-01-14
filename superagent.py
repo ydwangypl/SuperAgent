@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-SuperAgent v3.1 启动脚本
+SuperAgent v3.2 启动脚本
 
 直接运行: python superagent.py
 """

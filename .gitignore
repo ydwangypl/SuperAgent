@@ -47,4 +47,5 @@ htmlcov/
 
 # Temporary files
 .tmp/
+nul
 __init__.py

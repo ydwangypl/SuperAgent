@@ -61,11 +61,6 @@ class ChangeRecord:
     diff: Optional[str] = None  # diff内容(如果适用)
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
-    @property
-    def file_path(self) -> str:
-        """兼容性属性"""
-        return self.path
-
     def to_dict(self) -> Dict:
         return {
             "path": self.path,
@@ -79,11 +74,22 @@ class ChangeRecord:
 @dataclass
 class IncrementalConfig:
     """增量更新配置"""
+    # 默认启用增量更新
     enabled: bool = True
+    
+    # 快照保留天数 (过期自动清理)
     retention_days: int = 30
-    incremental_threshold: float = 0.3  # 30%以下使用增量
+    
+    # 差异比例阈值 (低于此比例时使用增量更新，否则全量更新)
+    incremental_threshold: float = 0.3
+    
+    # 每个文件保留的最大快照历史版本数
     max_snapshots_per_file: int = 10
+    
+    # 是否在快照中缓存文件内容以供 Diff 计算
     cache_content: bool = True
+    
+    # 快照存储目录 (相对于项目根目录)
     snapshot_dir: str = ".superagent/snapshots"
 
     def to_dict(self) -> Dict:
@@ -134,9 +140,9 @@ class IncrementalUpdater:
         if self.index_file.exists():
             try:
                 with open(self.index_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
+                    index_data = json.load(f)
                     # 将字典转换回 FileSnapshot 对象以供 snapshots 属性使用
-                    return {path: FileSnapshot.from_dict(d) for path, d in data.items()}
+                    return {path: FileSnapshot.from_dict(d) for path, d in index_data.items()}
             except Exception as e:
                 logger.warning(f"加载索引失败 ({type(e).__name__}): {e}")
         return {}
@@ -585,20 +591,6 @@ class IncrementalUpdater:
             "timestamp": datetime.now().isoformat()
         }
 
-    def get_change_summary(self) -> Dict[str, Any]:
-        """获取变更摘要 (同步 - 仅用于兼容性)"""
-        # 注意：此方法在异步环境中会报错，仅保留接口
-        import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # 如果在运行中的 event loop 中，这种调用是不安全的
-                logger.warning("在运行中的 event loop 中同步调用 get_change_summary")
-                return {"error": "synchronous call in async loop"}
-            return loop.run_until_complete(self.get_change_summary_async())
-        except Exception as e:
-            logger.error(f"同步运行异步方法失败 ({type(e).__name__}): {e}")
-            return {"error": f"could not run async method synchronously: {e}"}
 
     def _get_snapshot(self, file_path: str) -> Optional[FileSnapshot]:
         """获取已保存的快照"""

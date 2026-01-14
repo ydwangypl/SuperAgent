@@ -7,7 +7,7 @@
 """
 
 import logging
-from typing import List, Dict, Set
+from typing import List
 
 from .models import Step, DependencyGraph, RequirementAnalysis
 
@@ -104,7 +104,7 @@ class DependencyAnalyzer:
     def _identify_parallel_opportunities(self, graph: DependencyGraph):
         """识别并标记可并行的步骤"""
         groups = graph.get_parallel_groups()
-        
+
         # 凡是属于同一层且层内有多个步骤的, 都可以初步认为是可并行的
         # 注意: 这里的 can_parallel 标记主要用于编排参考
         for group in groups:
@@ -156,7 +156,7 @@ class DependencyAnalyzer:
             """获取到该步骤为止的最长路径时间"""
             if step_id in memo:
                 return memo[step_id]
-                
+
             step = step_map.get(step_id)
             if not step:
                 return 0
@@ -176,6 +176,6 @@ class DependencyAnalyzer:
 
         if not graph.nodes:
             return 0
-            
+
         # 计算所有步骤的路径时间,返回最大值
         return max(get_path_time(step_id) for step_id in graph.nodes.keys())

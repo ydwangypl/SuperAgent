@@ -55,17 +55,18 @@ class ConversationManager:
         self.token_config = TokenOptimizationConfig()
         self.compressor = SmartContextCompressor()
 
-        # 需求检查模式
+        # 需求检查模式 (通用化升级: 不再局限于特定业务领域)
         self._key_info_patterns = [
-            re.compile(r"博客|网站|应用|系统|api", re.IGNORECASE),
-            re.compile(r"用户|文章|商品|订单", re.IGNORECASE),
-            re.compile(r"登录|注册|发布|评论", re.IGNORECASE)
+            # 1. 项目/动作描述 (如: 创建、重构、修复、实现)
+            re.compile(r"创建|开发|重构|修复|实现|编写|create|refactor|fix|implement|build", re.IGNORECASE),
+            # 2. 技术对象 (如: 代码、功能、模块、类、函数、插件、工具)
+            re.compile(r"代码|功能|模块|类|函数|插件|工具|code|feature|module|class|function|plugin|tool", re.IGNORECASE),
+            # 3. 目标描述 (用户输入中包含具体名词)
+            re.compile(r"\w{2,}", re.UNICODE) 
         ]
 
-        self._project_type_pattern = re.compile(r"博客|网站|应用|系统|api", re.IGNORECASE)
-        self._main_objects_pattern = re.compile(r"用户|文章|商品|订单|评论", re.IGNORECASE)
-        self._key_features_pattern = re.compile(r"登录|注册|发布|编辑|删除|评论", re.IGNORECASE)
-        self._tech_stack_pattern = re.compile(r"python|javascript|java|go|rust", re.IGNORECASE)
+        self._project_type_pattern = re.compile(r"项目|工具|应用|系统|插件|库|framework|library|tool|app", re.IGNORECASE)
+        self._tech_stack_pattern = re.compile(r"python|javascript|typescript|java|go|rust|cpp|php|ruby", re.IGNORECASE)
 
         self.initialized = True
 
@@ -173,15 +174,7 @@ class ConversationManager:
         user_input: str,
         intent: Intent
     ) -> List[ClarificationQuestion]:
-        """生成澄清问题
-
-        Args:
-            user_input: 用户输入
-            intent: 意图
-
-        Returns:
-            List[ClarificationQuestion]: 澄清问题列表
-        """
+        """生成澄清问题 (通用化升级: 适应各种业务领域)"""
         questions = []
         user_input_lower = user_input.lower()
 
@@ -192,42 +185,28 @@ class ConversationManager:
                 questions.append(ClarificationQuestion(
                     question_id="project_type",
                     question="您想开发什么类型的项目?",
-                    options=["博客系统", "电商网站", "管理后台", "API服务", "其他"],
+                    options=["Web 应用/API", "CLI 命令行工具", "插件/扩展", "库/框架", "其他"],
                     required=True,
-                    reason="需要确定项目类型以选择合适的技术栈"
+                    reason="需要确定项目形态以规划目录结构"
                 ))
 
-            if not self._main_objects_pattern.search(user_input_lower):
-                questions.append(ClarificationQuestion(
-                    question_id="main_objects",
-                    question="这个项目主要管理什么内容?",
-                    options=["文章和内容", "商品和订单", "用户和数据", "其他"],
-                    required=True,
-                    reason="需要了解核心业务对象"
-                ))
-
-            if not self._key_features_pattern.search(user_input_lower):
-                questions.append(ClarificationQuestion(
-                    question_id="key_features",
-                    question="需要哪些核心功能?",
-                    options=[
-                        "用户系统(注册/登录)",
-                        "内容管理(发布/编辑)",
-                        "评论互动",
-                        "搜索功能"
-                    ],
-                    required=False,
-                    reason="了解功能需求以规划开发步骤"
-                ))
+            # 询问核心目标
+            questions.append(ClarificationQuestion(
+                question_id="main_purpose",
+                question="这个项目的主要核心功能或目标是什么?",
+                options=None, # 强制手动输入
+                required=True,
+                reason="需要了解核心业务逻辑"
+            ))
 
             # 技术栈偏好
             if not self._tech_stack_pattern.search(user_input_lower):
                 questions.append(ClarificationQuestion(
                     question_id="tech_stack",
                     question="有技术栈偏好吗?",
-                    options=["Python", "JavaScript/Node.js", "不确定,请推荐"],
+                    options=["Python", "JavaScript/TypeScript", "Go", "Rust", "不确定,请推荐"],
                     required=False,
-                    reason="根据技术栈选择合适的Agent"
+                    reason="根据技术栈选择合适的 Agent"
                 ))
 
         return questions

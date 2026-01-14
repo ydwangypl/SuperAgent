@@ -55,6 +55,9 @@ class AgentContext:
     project_type: Optional[str] = None        # 项目类型
     tech_stack: List[str] = field(default_factory=list)        # 技术栈
     requirements: Dict[str, Any] = field(default_factory=dict)  # 需求信息
+    
+    # 监控相关 (Phase 3 优化)
+    token_monitor: Optional[Any] = None       # Token 监控器
 
 
 @dataclass

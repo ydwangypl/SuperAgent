@@ -11,10 +11,11 @@ from pathlib import Path
 from typing import Optional
 from .models import OrchestrationConfig
 
+
 class BaseOrchestrator(ABC):
     """
     编排器基类
-    
+
     Extension Guide:
         1. 继承 BaseOrchestrator 类。
         2. 实现核心业务逻辑方法 (如 run(), execute_task() 等)。
@@ -26,15 +27,15 @@ class BaseOrchestrator(ABC):
             def __init__(self, project_root, config=None, my_tool=None):
                 super().__init__(project_root, config)
                 self.my_tool = my_tool
-            
+
             async def run(self, task_desc: str):
                 # 实现具体的编排逻辑
                 pass
     """
 
     def __init__(
-        self, 
-        project_root: Path, 
+        self,
+        project_root: Path,
         config: Optional[OrchestrationConfig] = None
     ) -> None:
         """初始化编排器

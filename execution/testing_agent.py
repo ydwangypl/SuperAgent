@@ -126,7 +126,7 @@ class TestingAgent(BaseAgent):
         target_files = task_input.get('target_files', [])
         code_content = task_input.get('code_content', {})
 
-        structure = {
+        code_analysis_structure = {
             'files': target_files,
             'functions': [],
             'classes': [],
@@ -165,7 +165,7 @@ class TestingAgent(BaseAgent):
             # 查找类定义
             classes = re.findall(r'class\s+(\w+).*?:', content)
             for cls in classes:
-                structure['classes'].append({
+                code_analysis_structure['classes'].append({
                     'name': cls,
                     'file': file_path
                 })
@@ -177,7 +177,7 @@ class TestingAgent(BaseAgent):
                     methods = re.findall(r'def\s+(\w+)\s*\(', class_match.group(1))
                     for method in methods:
                         if not method.startswith('_'):
-                            structure['methods'].append({
+                            code_analysis_structure['methods'].append({
                                 'name': method,
                                 'class': cls,
                                 'file': file_path
@@ -186,7 +186,7 @@ class TestingAgent(BaseAgent):
             # 查找函数定义
             functions = re.findall(r'^def\s+(\w+)\s*\(', content, re.MULTILINE)
             for func in functions:
-                structure['functions'].append({
+                code_analysis_structure['functions'].append({
                     'name': func,
                     'file': file_path
                 })
@@ -195,10 +195,10 @@ class TestingAgent(BaseAgent):
             imports = re.findall(r'^import\s+(\w+)|^from\s+(\w+)', content, re.MULTILINE)
             for imp in imports:
                 module = imp[0] or imp[1]
-                if module not in structure['imports']:
-                    structure['imports'].append(module)
+                if module not in code_analysis_structure['imports']:
+                    code_analysis_structure['imports'].append(module)
 
-        return structure
+        return code_analysis_structure
 
     async def _design_test_cases(
         self,

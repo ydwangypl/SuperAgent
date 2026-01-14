@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-SuperAgent v3.1 配置管理模块
+SuperAgent v3.2 配置管理模块
 
 提供统一的配置管理接口
 """
@@ -172,7 +172,7 @@ class TokenMonitorConfig(BaseModel):
     enabled: bool = True
 
     # 监控日志文件
-    log_file: str = ".superagent/token_usage.json"
+    log_file: str = ".superagent/token_usage.jsonl"
 
     # 保留天数
     retention_days: int = Field(default=30, ge=0)
@@ -182,6 +182,12 @@ class TokenMonitorConfig(BaseModel):
 
     # 是否追踪增量节省
     track_incremental_savings: bool = True
+
+    # 预算相关
+    enable_budget: bool = False
+    total_budget: int = Field(default=1000000, ge=0)
+    warning_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+    stop_on_exceed: bool = True
 
 
 class DistributionConfig(BaseModel):
@@ -224,6 +230,9 @@ class SuperAgentConfig(BaseModel):
 
     # 项目根目录
     project_root: Path = Field(default_factory=lambda: Path.cwd())
+
+    # 用户经验等级: novice (新手/小白), master (专家/大神)
+    experience_level: str = Field(default="novice")
 
     # 记忆系统配置
     memory: MemoryConfig = Field(default_factory=MemoryConfig)

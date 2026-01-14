@@ -22,8 +22,39 @@ from orchestration.models import (
     OrchestrationConfig,
     SingleTaskConfig
 )
-from planning.models import ExecutionPlan, Step
+from planning.models import ExecutionPlan, Step, Requirements, DependencyGraph, RequirementAnalysis
 from common.models import AgentType
+
+
+@pytest.fixture
+def dummy_plan():
+    """创建一个符合 v3.2 规范的虚拟执行计划"""
+    reqs = Requirements(user_input="测试项目")
+    analysis = RequirementAnalysis()
+    steps = [
+        Step(
+            id="step-001",
+            name="实现用户登录",
+            description="实现用户登录",
+            agent_type=AgentType.BACKEND_DEV
+        ),
+        Step(
+            id="step-002",
+            name="创建注册表单",
+            description="创建注册表单",
+            agent_type=AgentType.BACKEND_DEV
+        )
+    ]
+    graph = DependencyGraph()
+    for s in steps:
+        graph.add_step(s)
+    
+    return ExecutionPlan(
+        requirements=reqs,
+        steps=steps,
+        dependencies=graph,
+        analysis=analysis
+    )
 
 
 @pytest.fixture
@@ -66,27 +97,10 @@ def temp_project():
 class TestTaskListAndGitIntegration:
     """TaskListManager 和 GitAutoCommitManager 集成测试"""
 
-    def test_end_to_end_workflow(self, temp_project):
+    def test_end_to_end_workflow(self, temp_project, dummy_plan):
         """测试端到端工作流程: 创建任务列表 → 执行 → Git commit"""
-        # 1. 创建执行计划
-        plan = ExecutionPlan(
-            project_id="TestProject",
-            description="测试项目",
-            steps=[
-                Step(
-                    id="step-001",
-                    name="实现用户登录",
-                    description="实现用户登录",
-                    agent_type=AgentType.BACKEND_DEV
-                ),
-                Step(
-                    id="step-002",
-                    name="创建注册表单",
-                    description="创建注册表单",
-                    agent_type=AgentType.BACKEND_DEV
-                )
-            ]
-        )
+        # 1. 使用虚拟执行计划
+        plan = dummy_plan
 
         # 2. 创建任务列表管理器
         task_manager = TaskListManager(temp_project)
@@ -136,18 +150,26 @@ class TestTaskListAndGitIntegration:
     def test_checkpoint_resume(self, temp_project):
         """测试断点续传功能"""
         # 1. 创建初始任务列表
+        reqs = Requirements(user_input="测试项目")
+        analysis = RequirementAnalysis()
+        steps = [
+            Step(
+                id=f"step-{i:03d}",
+                name=f"任务 {i}",
+                description=f"任务 {i}",
+                agent_type=AgentType.BACKEND_DEV
+            )
+            for i in range(1, 6)
+        ]
+        graph = DependencyGraph()
+        for s in steps:
+            graph.add_step(s)
+
         plan = ExecutionPlan(
-            project_id="TestProject",
-            description="测试项目",
-            steps=[
-                Step(
-                    id=f"step-{i:03d}",
-                    name=f"任务 {i}",
-                    description=f"任务 {i}",
-                    agent_type=AgentType.BACKEND_DEV
-                )
-                for i in range(1, 6)
-            ]
+            requirements=reqs,
+            steps=steps,
+            dependencies=graph,
+            analysis=analysis
         )
 
         task_manager1 = TaskListManager(temp_project)
@@ -182,16 +204,9 @@ class TestTaskListAndGitIntegration:
         # 7. 验证所有任务完成
         assert task_manager2.get_status()["completed"] == 5
 
-    def test_task_failure_handling(self, temp_project):
+    def test_task_failure_handling(self, temp_project, dummy_plan):
         """测试任务失败处理"""
-        plan = ExecutionPlan(
-            project_id="TestProject",
-            description="测试项目",
-            steps=[
-                Step(id="step-001", name="任务 1", description="任务 1", agent_type=AgentType.BACKEND_DEV),
-                Step(id="step-002", name="任务 2", description="任务 2", agent_type=AgentType.BACKEND_DEV)
-            ]
-        )
+        plan = dummy_plan
 
         task_manager = TaskListManager(temp_project)
         task_list = task_manager.create_from_plan(plan)
@@ -313,15 +328,26 @@ class TestPerformance:
         import time
 
         # 创建包含 100 个任务的执行计划
+        reqs = Requirements(user_input="性能测试项目")
+        analysis = RequirementAnalysis()
         steps = [
-            Step(id=f"step-{i:03d}", name=f"任务 {i}", description=f"任务 {i}", agent_type=AgentType.BACKEND_DEV)
+            Step(
+                id=f"step-{i:03d}",
+                name=f"任务 {i}",
+                description=f"任务 {i}",
+                agent_type=AgentType.BACKEND_DEV
+            )
             for i in range(1, 101)
         ]
+        graph = DependencyGraph()
+        for s in steps:
+            graph.add_step(s)
 
         plan = ExecutionPlan(
-            project_id="TestProject",
-            description="性能测试项目",
-            steps=steps
+            requirements=reqs,
+            steps=steps,
+            dependencies=graph,
+            analysis=analysis
         )
 
         # 测量创建时间
@@ -349,21 +375,27 @@ class TestPerformance:
         import time
 
         # 创建大任务列表
+        reqs = Requirements(user_input="性能测试项目")
+        analysis = RequirementAnalysis()
         steps = [
             Step(
                 id=f"step-{i:03d}",
+                name=f"任务 {i}",
                 description=f"任务 {i} " * 10,  # 较长的描述
-                agent_type="general",
-                dependencies=[],
-                test_steps=[f"测试步骤 {j}" for j in range(5)]
+                agent_type=AgentType.BACKEND_DEV,
+                dependencies=[]
             )
             for i in range(1, 101)
         ]
+        graph = DependencyGraph()
+        for s in steps:
+            graph.add_step(s)
 
         plan = ExecutionPlan(
-            project_id="TestProject",
-            description="性能测试项目",
-            steps=steps
+            requirements=reqs,
+            steps=steps,
+            dependencies=graph,
+            analysis=analysis
         )
 
         task_manager = TaskListManager(temp_project)
@@ -438,39 +470,47 @@ class TestRealWorldScenarios:
     def test_web_development_workflow(self, temp_project):
         """测试 Web 开发工作流程"""
         # 1. 创建任务列表
+        reqs = Requirements(user_input="待办事项应用")
+        analysis = RequirementAnalysis()
+        steps = [
+            Step(
+                id="step-001",
+                name="数据库设计",
+                description="设计数据库模型",
+                agent_type=AgentType.DATABASE_DESIGN,
+                dependencies=[]
+            ),
+            Step(
+                id="step-002",
+                name="后端API开发",
+                description="实现用户 API",
+                agent_type=AgentType.BACKEND_DEV,
+                dependencies=["step-001"]
+            ),
+            Step(
+                id="step-003",
+                name="前端开发",
+                description="创建注册表单",
+                agent_type=AgentType.FRONTEND_DEV,
+                dependencies=["step-001"]
+            ),
+            Step(
+                id="step-004",
+                name="测试",
+                description="编写单元测试",
+                agent_type=AgentType.QA_ENGINEERING,
+                dependencies=["step-002", "step-003"]
+            )
+        ]
+        graph = DependencyGraph()
+        for s in steps:
+            graph.add_step(s)
+
         plan = ExecutionPlan(
-            project_id="TodoApp",
-            description="待办事项应用",
-            steps=[
-                Step(
-                    id="step-001",
-                    description="设计数据库模型",
-                    agent_type="database-design",
-                    dependencies=[],
-                    test_steps=["验证表结构", "检查关系"]
-                ),
-                Step(
-                    id="step-002",
-                    description="实现用户 API",
-                    agent_type="backend-dev",
-                    dependencies=["step-001"],
-                    test_steps=["测试登录", "测试注册"]
-                ),
-                Step(
-                    id="step-003",
-                    description="创建注册表单",
-                    agent_type="frontend-dev",
-                    dependencies=["step-001"],
-                    test_steps=["表单验证", "错误处理"]
-                ),
-                Step(
-                    id="step-004",
-                    description="编写单元测试",
-                    agent_type="qa-engineering",
-                    dependencies=["step-002", "step-003"],
-                    test_steps=["API 测试", "UI 测试"]
-                )
-            ]
+            requirements=reqs,
+            steps=steps,
+            dependencies=graph,
+            analysis=analysis
         )
 
         task_manager = TaskListManager(temp_project)
@@ -531,18 +571,27 @@ class TestRealWorldScenarios:
         task_manager = TaskListManager(temp_project)
 
         # 第一阶段: 创建基础结构
+        reqs_v1 = Requirements(user_input="版本 1.0")
+        analysis_v1 = RequirementAnalysis()
+        steps_v1 = [
+            Step(
+                id=f"step-{i:03d}",
+                name=f"基础功能 {i}",
+                description=f"基础功能 {i}",
+                agent_type=AgentType.BACKEND_DEV,
+                dependencies=[]
+            )
+            for i in range(1, 4)
+        ]
+        graph_v1 = DependencyGraph()
+        for s in steps_v1:
+            graph_v1.add_step(s)
+
         plan_v1 = ExecutionPlan(
-            project_id="MyApp",
-            description="版本 1.0",
-            steps=[
-                Step(
-                    id=f"step-{i:03d}",
-                    description=f"基础功能 {i}",
-                    agent_type="general",
-                    dependencies=[]
-                )
-                for i in range(1, 4)
-            ]
+            requirements=reqs_v1,
+            steps=steps_v1,
+            dependencies=graph_v1,
+            analysis=analysis_v1
         )
 
         task_list_v1 = task_manager.create_from_plan(plan_v1)
@@ -561,18 +610,27 @@ class TestRealWorldScenarios:
         assert loaded_list.completed == 3
 
         # 添加新任务
+        reqs_v2 = Requirements(user_input="版本 1.1")
+        analysis_v2 = RequirementAnalysis()
+        steps_v2 = [
+            Step(
+                id=f"step-{i:03d}",
+                name=f"新功能 {i}",
+                description=f"新功能 {i}",
+                agent_type=AgentType.BACKEND_DEV,
+                dependencies=[]
+            )
+            for i in range(4, 7)
+        ]
+        graph_v2 = DependencyGraph()
+        for s in steps_v2:
+            graph_v2.add_step(s)
+
         plan_v2 = ExecutionPlan(
-            project_id="MyApp",
-            description="版本 1.1",
-            steps=[
-                Step(
-                    id=f"step-{i:03d}",
-                    description=f"新功能 {i}",
-                    agent_type="general",
-                    dependencies=[]
-                )
-                for i in range(4, 7)
-            ]
+            requirements=reqs_v2,
+            steps=steps_v2,
+            dependencies=graph_v2,
+            analysis=analysis_v2
         )
 
         task_list_v2 = task_manager_v2.create_from_plan(plan_v2)

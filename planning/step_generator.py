@@ -6,8 +6,7 @@
 根据需求分析生成执行步骤
 """
 
-import re
-from typing import List, Dict, Any
+from typing import List
 from datetime import timedelta
 
 from .models import (
@@ -36,11 +35,11 @@ class StepGenerator:
             List[Step]: 步骤列表
         """
         self.step_counter = 0
-        
+
         # 审计优化: 如果意图中有建议的步骤, 则基于建议步骤生成
         if requirements.intent and requirements.intent.suggested_steps:
             return self._generate_from_suggestions(requirements, analysis)
-            
+
         # 兜底逻辑: 基于特征分析生成硬编码步骤
         return self._generate_from_analysis(requirements, analysis)
 
@@ -53,14 +52,14 @@ class StepGenerator:
         steps = []
         suggestions = requirements.intent.suggested_steps
         agent_types = requirements.intent.agent_types or []
-        
+
         for i, task_name in enumerate(suggestions):
             self.step_counter += 1
-            
+
             # 尝试匹配合适的 Agent 类型
             # 简单的启发式匹配: 如果建议名称包含特定词汇
             agent_type = self._map_task_to_agent(task_name, agent_types)
-            
+
             step = Step(
                 id=f"step{self.step_counter}",
                 name=task_name,
@@ -76,13 +75,13 @@ class StepGenerator:
                 status=StepStatus.PENDING
             )
             steps.append(step)
-            
+
         return steps
 
     def _map_task_to_agent(self, task_name: str, recommended_agents: List[AgentType]) -> AgentType:
         """根据任务名称映射 Agent 类型"""
         name_lower = task_name.lower()
-        
+
         if any(kw in name_lower for kw in ["需求", "分析", "prd", "规划"]):
             return AgentType.PRODUCT_MANAGEMENT
         if any(kw in name_lower for kw in ["数据库", "表", "存储", "sql", "schema"]):
@@ -95,11 +94,11 @@ class StepGenerator:
             return AgentType.QA_ENGINEERING
         if any(kw in name_lower for kw in ["部署", "运维", "docker", "ci"]):
             return AgentType.DEVOPS_ENGINEERING
-            
+
         # 如果有推荐列表, 返回第一个
         if recommended_agents:
             return recommended_agents[0]
-            
+
         return AgentType.BACKEND_DEV  # 默认
 
     def _generate_from_analysis(
@@ -107,24 +106,69 @@ class StepGenerator:
         requirements: Requirements,
         analysis: RequirementAnalysis
     ) -> List[Step]:
-        """原有的基于分析的步骤生成逻辑"""
+        """基于特征分析生成硬编码步骤"""
         steps = []
-        
-        if analysis.has_product_requirements:
-            steps.append(self._create_product_step(requirements))
-            
+
+        # 1. 总是包含需求分析
+        self.step_counter += 1
+        steps.append(Step(
+            id=f"step{self.step_counter}",
+            name="产品需求分析",
+            description="分析用户输入, 细化功能点和约束条件",
+            agent_type=AgentType.PRODUCT_MANAGEMENT,
+            inputs={"user_input": requirements.user_input},
+            estimated_time=timedelta(minutes=10)
+        ))
+
+        # 2. 数据库设计
         if analysis.has_database:
-            steps.append(self._create_database_step(requirements))
-            
-        if analysis.has_backend:
-            steps.append(self._create_backend_step(requirements))
-            
+            self.step_counter += 1
+            steps.append(Step(
+                id=f"step{self.step_counter}",
+                name="数据库设计",
+                description="设计数据库表结构和索引",
+                agent_type=AgentType.DATABASE_DESIGN,
+                dependencies=[f"step{self.step_counter-1}"],
+                estimated_time=timedelta(minutes=20)
+            ))
+
+        # 3. 后端逻辑/API
+        if analysis.has_backend or analysis.has_api:
+            self.step_counter += 1
+            steps.append(Step(
+                id=f"step{self.step_counter}",
+                name="后端API开发",
+                description="实现业务逻辑和对外接口",
+                agent_type=AgentType.BACKEND_DEV,
+                dependencies=[f"step{self.step_counter-1}"],
+                estimated_time=timedelta(minutes=30)
+            ))
+
+        # 4. 前端界面
         if analysis.has_frontend:
-            steps.append(self._create_frontend_step(requirements))
-            
-        if analysis.has_backend or analysis.has_frontend:
-            steps.append(self._create_testing_step(requirements))
-            
+            self.step_counter += 1
+            steps.append(Step(
+                id=f"step{self.step_counter}",
+                name="前端界面开发",
+                description="实现UI界面和交互逻辑",
+                agent_type=AgentType.FRONTEND_DEV,
+                dependencies=[f"step{self.step_counter-1}"],
+                can_parallel=True,
+                estimated_time=timedelta(minutes=45)
+            ))
+
+        # 5. 测试
+        if analysis.has_testing:
+            self.step_counter += 1
+            steps.append(Step(
+                id=f"step{self.step_counter}",
+                name="功能测试与验收",
+                description="执行单元测试和集成测试",
+                agent_type=AgentType.QA_ENGINEERING,
+                dependencies=[f"step{self.step_counter-1}"],
+                estimated_time=timedelta(minutes=20)
+            ))
+
         return steps
 
     def _create_product_step(self, requirements: Requirements) -> Step:

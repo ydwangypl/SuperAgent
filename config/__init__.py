@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-SuperAgent v3.1 配置管理
+SuperAgent v3.2 配置管理
 
 统一的配置管理系统
 """

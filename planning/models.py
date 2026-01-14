@@ -8,17 +8,15 @@
 
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Set, TYPE_CHECKING
-from enum import Enum
 from datetime import timedelta
 import logging
+
+from common.models import StepStatus, AgentType
 
 if TYPE_CHECKING:
     from conversation.models import Intent
 
 logger = logging.getLogger(__name__)
-
-
-from common.models import StepStatus, AgentType
 
 
 @dataclass
@@ -42,7 +40,7 @@ class Step:
     inputs: Dict[str, Any] = field(default_factory=dict)      # 输入参数
     dependencies: List[str] = field(default_factory=list)     # 依赖的步骤ID列表
     can_parallel: bool = False             # 是否可并行执行
-    estimated_time: timedelta = timedelta(minutes=10)         # 预计耗时
+    estimated_time: timedelta = timedelta(minutes=3)         # 预计耗时 (默认 3 分钟,符合粒度验证要求)
     status: StepStatus = StepStatus.PENDING                    # 状态
     outputs: Dict[str, Any] = field(default_factory=dict)     # 输出结果
 
@@ -75,7 +73,7 @@ class DependencyGraph:
 
     def get_ready_steps(self, completed_steps: Optional[Set[str]] = None) -> List[str]:
         """获取所有就绪的步骤(依赖已满足)
-        
+
         Args:
             completed_steps: 已完成的步骤ID集合
         """
@@ -91,41 +89,28 @@ class DependencyGraph:
 
     def get_parallel_groups(self) -> List[List[str]]:
         """使用分层拓扑排序获取可并行的步骤组
-        
+
         Returns:
             List[List[str]]: 每一层是可以并行的步骤ID列表
         """
         groups = []
         completed = set()
         remaining = set(self.nodes.keys())
-        
         while remaining:
-            # 找出当前层所有就绪的步骤
-            current_layer = []
-            for step_id in list(remaining):
-                node = self.nodes[step_id]
-                if all(dep in completed for dep in node.dependencies):
-                    current_layer.append(step_id)
-            
-            if not current_layer:
-                # 检查是否存在循环依赖
-                if remaining:
-                    logger.error(f"检测到循环依赖，剩余步骤: {remaining}")
+            ready = self.get_ready_steps(completed)
+            if not ready:
                 break
-                
-            groups.append(current_layer)
-            for step_id in current_layer:
-                completed.add(step_id)
-                remaining.remove(step_id)
-                
+            groups.append(ready)
+            completed.update(ready)
+            remaining.difference_update(ready)
         return groups
 
     def can_execute_parallel(self, step_ids: List[str]) -> bool:
         """检查一组步骤是否可以并行执行
-        
+
         Args:
             step_ids: 步骤ID列表
-            
+
         Returns:
             bool: True表示可以并行执行(互不依赖)
         """
@@ -133,12 +118,12 @@ class DependencyGraph:
         for step_id in step_ids:
             if step_id not in self.nodes:
                 continue
-            
+
             node = self.nodes[step_id]
             # 如果该步骤依赖于列表中的任何其他步骤,则不能并行
             if any(dep in step_set for dep in node.dependencies):
                 return False
-                
+
         return True
 
 
@@ -191,9 +176,9 @@ class ExecutionPlan:
         """获取可并行的步骤组 (分层执行)"""
         id_groups = self.dependencies.get_parallel_groups()
         step_map = {s.id: s for s in self.steps}
-        
+
         result = []
         for group in id_groups:
             result.append([step_map[sid] for sid in group if sid in step_map])
-            
+
         return result

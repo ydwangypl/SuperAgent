@@ -14,13 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 
-class TaskStatus(Enum):
-    """任务状态枚举"""
-    PENDING = "pending"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+from common.models import TaskStatus
 
 
 @dataclass

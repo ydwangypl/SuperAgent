@@ -237,18 +237,26 @@ class TaskListManager:
         from planning.models import ExecutionPlan
 
         if project_name is None:
-            project_name = plan.project_id
+            # v3.2 使用 requirements.user_input 作为项目标识
+            if hasattr(plan, 'requirements') and plan.requirements:
+                project_name = getattr(plan.requirements, 'user_input', 'New Project')
+            else:
+                project_name = getattr(plan, 'project_id', 'New Project')
 
-        tasks = [
-            TaskItem(
+        tasks = []
+        for step in plan.steps:
+            agent_type = getattr(step, 'agent_type', 'general')
+            # 确保 AgentType 被转换为字符串 (Enum 兼容性)
+            if hasattr(agent_type, 'value'):
+                agent_type = agent_type.value
+            
+            tasks.append(TaskItem(
                 id=step.id,
                 description=step.description,
-                assigned_agent=getattr(step, 'agent_type', 'general'),
+                assigned_agent=str(agent_type),
                 test_steps=getattr(step, 'test_steps', []),
                 dependencies=getattr(step, 'dependencies', [])
-            )
-            for step in plan.steps
-        ]
+            ))
 
         self.task_list = TaskList(
             project_name=project_name,

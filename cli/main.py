@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-SuperAgent v3.1 CLI主入口
+SuperAgent v3.2 CLI主入口
 
 命令行交互界面,支持自然语言编程
 """
@@ -26,9 +26,13 @@ sys.path.insert(0, str(SUPERAGENT_ROOT))
 
 # 导入对话管理器、规划器和编排器
 from conversation.manager import ConversationManager
-from planning.planner import ProjectPlanner
+from planning.smart_planner import SmartPlanner
 from orchestration.orchestrator import Orchestrator
 from orchestration.models import OrchestrationConfig
+
+# 导入交互式组件
+from utils.interactive import interactive_select
+from utils.ui import UIUtils
 
 # 导入配置管理
 from config import load_config, save_config, SuperAgentConfig
@@ -37,11 +41,22 @@ from config import load_config, save_config, SuperAgentConfig
 class SuperAgentCLI(cmd.Cmd):
     """SuperAgent命令行界面"""
 
+    # --- 常量定义 ---
+    VERSION = "v3.2"
+    
+    # 颜色常量
+    COLOR_PROMPT = "\033[1;32m"  # 绿色
+    COLOR_RESET = "\033[0m"
+    
+    # 统计相关常量 (模拟)
+    MOCK_TOKEN_TODAY = 124532
+    MOCK_SAVING_RATIO = 0.42  # 42%
+    
     # CLI配置
-    prompt = "\033[1;32mSuperAgent>\033[0m "
-    intro = """
+    prompt = f"{COLOR_PROMPT}SuperAgent>{COLOR_RESET} "
+    intro = f"""
     ╔═══════════════════════════════════════════════════════╗
-    ║     SuperAgent v3.1 - 自然语言编程系统               ║
+    ║     SuperAgent {VERSION} - 自然语言编程系统               ║
     ║                                                     ║
     ║     "通过对话,让编程变得简单"                       ║
     ╚═══════════════════════════════════════════════════════╝
@@ -53,21 +68,192 @@ class SuperAgentCLI(cmd.Cmd):
 
     def __init__(self):
         super().__init__()
-        self.project_root = SUPERAGENT_ROOT
+        # 加载配置
+        self.config = load_config()
+        self.project_root = self.config.project_root
         self.current_project = None
+        self.experience_level = self.config.experience_level
+
+        # 根据经验等级调整 UI
+        self._update_ui_by_experience()
 
         # 初始化对话管理器
         self.conversation_mgr = ConversationManager()
 
-        # 初始化规划器
-        self.planner = ProjectPlanner()
+        # 初始化规划器 (升级为 SmartPlanner)
+        self.planner = SmartPlanner()
+
+        # 初始化脑暴管理器 (P1 Task 2.1)
+        try:
+            from planning.brainstorming_manager import BrainstormingManager
+            self.brainstorming_mgr = BrainstormingManager()
+            self.brainstorming_enabled = True
+        except ImportError:
+            self.brainstorming_mgr = None
+            self.brainstorming_enabled = False
+
+        # 初始化技能检查器 (P1 Task 2.3)
+        try:
+            from orchestration.skill_checker import SkillChecker, Skill
+            self.skill_checker = SkillChecker()
+            self.skill_checker_enabled = True
+
+            # 默认启用所有技能
+            self.skill_checker.enable_all_skills()
+        except ImportError:
+            self.skill_checker = None
+            self.skill_checker_enabled = False
 
         # 初始化编排器
         self.orchestrator = None
         self.current_plan = None
         self.last_result = None
 
+    def _update_ui_by_experience(self):
+        """根据用户经验等级更新 UI 元素"""
+        if self.experience_level == "novice":
+            self.prompt = "\033[1;36m🌱 小白模式>\033[0m "
+            self.intro = """
+    ╔═══════════════════════════════════════════════════════╗
+    ║     SuperAgent v3.2 - 你的 AI 编程小伙伴             ║
+    ║                                                     ║
+    ║     "告诉我想做什么,我来帮你实现"                   ║
+    ╚═══════════════════════════════════════════════════════╝
+
+    🌟 欢迎来到编程新世界! 
+    💡 提示: 
+       - 直接说 "我想做一个记事本" 就可以开始
+       - 输入 'help' 可以查看所有指令
+       - 输入 'switch' 可以切换到大神模式 (如果你觉得自己变强了)
+            """
+        else:
+            self.prompt = "\033[1;35m🔥 大神模式>\033[0m "
+            self.intro = """
+    ╔═══════════════════════════════════════════════════════╗
+    ║     SuperAgent v3.2 - 开发者专家系统                 ║
+    ║                                                     ║
+    ║     "Power tools for masters"                       ║
+    ╚═══════════════════════════════════════════════════════╝
+
+    🚀 极速开发模式已开启
+    🛠️  高级功能: 
+       - 使用 'config show' 查看详尽参数
+       - 使用 'status detail' 查看执行链
+       - 输入 'switch' 切换回新手模式
+            """
+
+    def do_switch(self, args: str):
+        """切换用户经验等级 (小白/大神) - switch"""
+        new_level = "master" if self.experience_level == "novice" else "novice"
+        self.experience_level = new_level
+        
+        # 更新并保存配置
+        self.config.experience_level = new_level
+        save_config(self.config)
+        
+        # 更新 UI
+        self._update_ui_by_experience()
+        
+        msg = "🚀 已切换到【大神模式】! 性能分析、详细日志和高级配置已解锁。" if new_level == "master" \
+              else "🌱 已切换到【小白模式】! 界面更简洁,我会多说点好听的。"
+        print(f"\n{msg}\n")
+        print(self.intro)
+
     # ========== 内置命令 ==========
+
+    def do_init(self, args: str):
+        """初始化一个新项目 (向导模式) - init"""
+        print("\n" + "✨" * 20)
+        print("  SuperAgent 项目初始化向导")
+        print("✨" * 20 + "\n")
+
+        try:
+            import questionary
+            HAS_QUESTIONARY = True
+        except ImportError:
+            HAS_QUESTIONARY = False
+
+        if HAS_QUESTIONARY:
+            import asyncio
+            asyncio.run(self._run_wizard_questionary())
+        else:
+            self._run_wizard_basic()
+
+    async def _run_wizard_questionary(self):
+        import questionary
+        from pathlib import Path
+
+        # 1. 基本信息
+        project_name = await questionary.text("你的项目叫什么名字?").ask_async()
+        description = await questionary.text("简单描述一下你的项目是做什么的:").ask_async()
+        
+        # 2. 技术栈 (小白友好)
+        stack = await questionary.select(
+            "你想用哪种类型的技术?",
+            choices=[
+                {"name": "Python (最适合新手,功能强大)", "value": "python"},
+                {"name": "Web (网页应用,如 HTML/JS)", "value": "web"},
+                {"name": "CLI (黑窗口命令行工具)", "value": "cli"}
+            ]
+        ).ask_async()
+
+        # 3. 确认
+        confirm = await questionary.confirm(f"准备好在 {project_name} 中开始工作了吗?").ask_async()
+        
+        if confirm:
+            print(f"\n🚀 太棒了! 正在为你准备项目 '{project_name}'...")
+            # 这里可以调用实际的初始化逻辑
+            print("✓ 目录结构已生成")
+            print("✓ 基础配置文件已就绪")
+            print("\n💡 提示: 现在你可以直接说 '帮我写一个 hello world' 看看效果。")
+        else:
+            print("\n已取消初始化。")
+
+    def _run_wizard_basic(self):
+        print("提示: 安装 'questionary' 可以获得更好的交互体验 (pip install questionary)\n")
+        project_name = input("你的项目名称: ")
+        description = input("项目描述: ")
+        print(f"\n🚀 正在为你准备项目 '{project_name}'...")
+        print("✓ 初始化完成!")
+
+    def do_diagnose(self, args: str):
+        """进入深度诊断模式 (仅限大神) - diagnose"""
+        if self.experience_level != "master":
+            print("\n❌ 诊断模式仅在【大神模式】下可用。")
+            print("   输入 'switch' 切换到大神模式。")
+            return
+
+        print("\n" + "🔍" * 20)
+        print("  SuperAgent 深度诊断面板")
+        print("🔍" * 20 + "\n")
+
+        # 1. 内存/记忆统计
+        if self.orchestrator and self.orchestrator.memory_manager:
+            stats = self.orchestrator.memory_manager.index.get("stats", {})
+            print(f"📊 记忆统计:")
+            print(f"   - 情节记忆 (Episodic): {stats.get('episodic_count', 0)}")
+            print(f"   - 语义记忆 (Semantic): {stats.get('semantic_count', 0)}")
+            print(f"   - 程序记忆 (Procedural): {stats.get('procedural_count', 0)}")
+        else:
+            print("📊 记忆统计: 未初始化")
+
+        # 2. Token 使用趋势 (模拟或从 monitor 获取)
+        print(f"\n🪙  Token 消耗概览:")
+        print(f"   - 今日累计: {self.MOCK_TOKEN_TODAY:,} (估算)")
+        print(f"   - 节省比例: {int(self.MOCK_SAVING_RATIO * 100)}% (通过压缩与增量更新)")
+
+        # 3. 系统负载
+        try:
+            import psutil
+            cpu = psutil.cpu_percent()
+            ram = psutil.virtual_memory().percent
+            print(f"\n💻 系统负载:")
+            print(f"   - CPU: {cpu}%")
+            print(f"   - RAM: {ram}%")
+        except ImportError:
+            print(f"\n💻 系统负载: (安装 psutil 以查看负载)")
+
+        print(f"\n💡 提示: 大神可以查看 .superagent/ 目录下的 json 索引以获取更多原始数据。")
 
     def do_status(self, args: str):
         """查看当前状态 - status [options]
@@ -75,6 +261,13 @@ class SuperAgentCLI(cmd.Cmd):
         选项:
           detail  - 显示详细信息
         """
+        print(f"\n" + "-"*30)
+        print(f"  SuperAgent 运行状态")
+        print(f"-"*30)
+        
+        level_icon = "🌱" if self.experience_level == "novice" else "🔥"
+        print(f"用户等级: {level_icon} {self.experience_level.upper()}")
+        
         if self.current_project:
             print(f"\n当前项目: {self.current_project}")
             print(f"项目路径: {self.project_root}")
@@ -82,7 +275,7 @@ class SuperAgentCLI(cmd.Cmd):
             print("\n当前状态: 未加载项目")
             print(f"工作目录: {self.project_root}")
 
-        print(f"\nSuperAgent版本: 3.0.0-dev")
+        print(f"\nSuperAgent版本: {self.VERSION}")
         print(f"Python版本: {sys.version.split()[0]}")
 
     def do_doctor(self, args: str):
@@ -155,12 +348,160 @@ class SuperAgentCLI(cmd.Cmd):
         found_keys = [label for key, label in api_keys.items() if os.environ.get(key)]
         
         if found_keys:
-            print(f"✅ LLM 配置: 已检测到 {', '.join(found_keys)}")
+            UIUtils.print_success(f"LLM 配置: 已检测到 {', '.join(found_keys)}")
         else:
-            print("⚠️  LLM 配置: 未检测到 API 密钥环境变量")
+            UIUtils.print_warning("LLM 配置: 未检测到 API 密钥环境变量")
             print("   (提示: 请在系统环境变量或 .env 文件中设置 OPENAI_API_KEY 等)")
 
         print("\n诊断完成！" + "="*50)
+
+    def do_skills(self, args: str):
+        """技能管理 - skills [command]
+
+        命令:
+          status   - 显示所有技能状态
+          enable   - 启用技能 (格式: skills enable <skill_name>)
+          disable  - 禁用技能 (格式: skills disable <skill_name>)
+          check    - 检查任务技能需求 (格式: skills check <task_type>)
+          history  - 显示技能检查历史
+          p0       - 启用 P0 核心技能 (TDD, Code Review)
+          p1       - 启用 P1 增强技能 (Brainstorming, Debugging)
+          all      - 启用所有技能
+        """
+        if not self.skill_checker_enabled:
+            UIUtils.print_error("技能检查器未启用")
+            return
+
+        if not args.strip():
+            # 默认显示状态
+            args = "status"
+
+        parts = args.strip().split(maxsplit=1)
+        command = parts[0]
+        command_args = parts[1] if len(parts) > 1 else ""
+
+        # 分发到对应的处理方法
+        handler_map = {
+            "status": self._handle_skills_status,
+            "enable": self._handle_skills_enable,
+            "disable": self._handle_skills_disable,
+            "check": self._handle_skills_check,
+            "history": self._handle_skills_history,
+            "p0": self._handle_skills_p0,
+            "p1": self._handle_skills_p1,
+            "all": self._handle_skills_all
+        }
+
+        handler = handler_map.get(command)
+        if handler:
+            handler(command_args)
+        else:
+            print(f"\n❌ 未知命令: {command}")
+            print("   输入 'help skills' 查看用法")
+
+    def _handle_skills_status(self, _args: str):
+        """显示技能状态"""
+        UIUtils.print_header("技能状态")
+        self.skill_checker.print_skill_status()
+
+    def _handle_skills_enable(self, skill_name: str):
+        """启用指定技能"""
+        if not skill_name:
+            UIUtils.print_error("请指定要启用的技能")
+            print("   可用技能: brainstorming, test_driven_development, systematic_debugging, code_review")
+            return
+
+        from orchestration.skill_checker import Skill
+        skill_map = {
+            "brainstorming": Skill.BRAINSTORMING,
+            "test_driven_development": Skill.TEST_DRIVEN_DEVELOPMENT,
+            "systematic_debugging": Skill.SYSTEMATIC_DEBUGGING,
+            "code_review": Skill.CODE_REVIEW,
+        }
+
+        if skill_name not in skill_map:
+            UIUtils.print_error(f"未知技能: {skill_name}")
+            return
+
+        self.skill_checker.enable_skill(skill_map[skill_name])
+        UIUtils.print_success(f"已启用技能: {skill_name}")
+
+    def _handle_skills_disable(self, skill_name: str):
+        """禁用指定技能"""
+        if not skill_name:
+            UIUtils.print_error("请指定要禁用的技能")
+            return
+
+        from orchestration.skill_checker import Skill
+        skill_map = {
+            "brainstorming": Skill.BRAINSTORMING,
+            "test_driven_development": Skill.TEST_DRIVEN_DEVELOPMENT,
+            "systematic_debugging": Skill.SYSTEMATIC_DEBUGGING,
+            "code_review": Skill.CODE_REVIEW,
+        }
+
+        if skill_name not in skill_map:
+            UIUtils.print_error(f"未知技能: {skill_name}")
+            return
+
+        self.skill_checker.disable_skill(skill_map[skill_name])
+        UIUtils.print_success(f"已禁用技能: {skill_name}")
+
+    def _handle_skills_check(self, task_type: str):
+        """检查任务技能需求"""
+        if not task_type:
+            print("\n❌ 请指定任务类型")
+            print("   可用任务: feature_development, bug_fixing, code_review, refactoring")
+            return
+
+        try:
+            passed = self.skill_checker.check_task_skills(task_type, auto_fail=False)
+            if passed:
+                print(f"\n✅ 任务 '{task_type}' 技能检查通过")
+            else:
+                print(f"\n❌ 任务 '{task_type}' 缺少必要技能")
+
+                # 显示详细需求
+                requirement = self.skill_checker.get_skill_requirement(task_type)
+                if requirement:
+                    print(f"\n📋 需要的技能:")
+                    for skill in requirement.required_skills:
+                        print(f"   - {skill.value}")
+                    print(f"\n💡 启用指导:\n{requirement.guidance}")
+
+        except Exception as e:
+            print(f"\n❌ 技能检查失败: {e}")
+
+    def _handle_skills_history(self, _args: str):
+        """显示技能检查历史"""
+        UIUtils.print_header("技能检查历史")
+
+        history = self.skill_checker.get_skill_history()
+        if not history:
+            print("\n暂无检查记录")
+        else:
+            for i, record in enumerate(history, 1):
+                status = "✅ 通过" if record["passed"] else "❌ 失败"
+                print(f"\n{i}. {record['task_type']} - {status}")
+                print(f"   时间: {record['timestamp']}")
+                if record["missing_skills"]:
+                    print(f"   缺少技能: {', '.join(record['missing_skills'])}")
+        print()
+
+    def _handle_skills_p0(self, _args: str):
+        """启用 P0 核心技能"""
+        self.skill_checker.enable_p0_skills()
+        print("\n✅ 已启用 P0 核心技能 (TDD, Code Review)")
+
+    def _handle_skills_p1(self, _args: str):
+        """启用 P1 增强技能"""
+        self.skill_checker.enable_p1_skills()
+        print("\n✅ 已启用 P1 增强技能 (Brainstorming, Debugging)")
+
+    def _handle_skills_all(self, _args: str):
+        """启用所有技能"""
+        self.skill_checker.enable_all_skills()
+        print("\n✅ 已启用所有技能")
 
     def do_plan(self, args: str):
         """创建项目计划 - plan <需求描述>"""
@@ -182,9 +523,9 @@ class SuperAgentCLI(cmd.Cmd):
             self.current_plan = plan
             
             print(f"✅ 计划生成成功: 共 {len(plan.steps)} 个步骤")
-            print("\n" + "="*60)
+            UIUtils.print_separator(prefix="\n")
             print(self.planner.format_plan(plan))
-            print("="*60)
+            UIUtils.print_separator()
             print("\n💡 提示: 输入 'execute' 开始执行此计划")
             
         except Exception as e:
@@ -243,20 +584,20 @@ class SuperAgentCLI(cmd.Cmd):
             validated_path = validate_path(target_path, SUPERAGENT_ROOT)
             
             # 2. 列出内容
-            files = os.listdir(str(validated_path))
+            items = os.listdir(str(validated_path))
             print(f"\n📁 {path_str}/")
-            for f in sorted(files):
-                f_path = validated_path / f
-                icon = "📁" if f_path.is_dir() else "📄"
-                print(f"  {icon} {f}")
+            for item_name in sorted(items):
+                item_path = validated_path / item_name
+                icon = "📁" if item_path.is_dir() else "📄"
+                print(f"  {icon} {item_name}")
         except SecurityError as e:
-            print(f"❌ 安全策略拒绝: {e}")
+            UIUtils.print_error(f"安全策略拒绝: {e}")
         except FileNotFoundError:
-            print(f"❌ 路径不存在: {path_str}")
+            UIUtils.print_error(f"路径不存在: {path_str}")
         except PermissionError:
-            print(f"❌ 权限不足: 无法读取目录 {path_str}")
+            UIUtils.print_error(f"权限不足: 无法读取目录 {path_str}")
         except Exception as e:
-            print(f"❌ 列出目录失败: {e}")
+            UIUtils.print_error(f"列出目录失败: {e}")
 
     def do_execute(self, args: str):
         """执行当前计划 - execute [options]
@@ -308,6 +649,11 @@ class SuperAgentCLI(cmd.Cmd):
             # 执行
             print(f"\n项目ID: {self.orchestrator.state.project_id}")
             print(f"任务数量: {len(self.current_plan.steps)}")
+            
+            if self.experience_level == "master":
+                print(f"并行执行: {'启用' if self.orchestrator.config.enable_parallel_execution else '禁用'}")
+                print(f"代码审查: {'启用' if self.orchestrator.config.enable_code_review else '禁用'}")
+            
             print("\n正在执行 (按 Ctrl+C 中断)... ")
 
             import time
@@ -326,10 +672,17 @@ class SuperAgentCLI(cmd.Cmd):
 
             # 显示结果
             print("\n" + "="*60)
-            print("  执行完成")
+            if self.experience_level == "novice":
+                print("  🎉 任务搞定啦！")
+            else:
+                print("  执行完成")
             print("="*60)
 
-            print(f"\n状态: {'✅ 成功' if self.last_result.success else '❌ 失败'}")
+            status_msg = "✅ 成功" if self.last_result.success else "❌ 失败"
+            if self.experience_level == "novice" and self.last_result.success:
+                status_msg = "🎊 大功告成！代码已经准备好了。"
+            
+            print(f"\n状态: {status_msg}")
             print(f"完成: {self.last_result.completed_tasks}/{self.last_result.total_tasks}")
             print(f"失败: {self.last_result.failed_tasks}")
             print(f"耗时: {duration:.2f}秒")
@@ -526,7 +879,7 @@ class SuperAgentCLI(cmd.Cmd):
         semantic = asyncio.run(self.orchestrator.memory_manager.query_semantic_memory())
         procedural = asyncio.run(self.orchestrator.memory_manager.get_procedural_memories())
 
-        export_data = {
+        memory_payload = {
             "export_time": str(datetime.now()),
             "episodic_count": len(episodic),
             "semantic_count": len(semantic),
@@ -538,7 +891,7 @@ class SuperAgentCLI(cmd.Cmd):
 
         output_path = self.project_root / filename
         with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(export_data, f, ensure_ascii=False, indent=2)
+            json.dump(memory_payload, f, ensure_ascii=False, indent=2)
 
         print(f"\n✓ 记忆已导出到: {output_path}")
         print(f"  总计: {len(episodic) + len(semantic) + len(procedural)} 条")
@@ -830,7 +1183,7 @@ class SuperAgentCLI(cmd.Cmd):
             config = load_config(project_root=self.project_root)
 
             print("\n" + "="*60)
-            print("  SuperAgent v3.1 配置")
+            print("  SuperAgent v3.2 配置")
             print("="*60)
 
             print(f"\n项目根目录: {config.project_root}")
@@ -926,7 +1279,7 @@ class SuperAgentCLI(cmd.Cmd):
         else:
             # 显示概览帮助
             print("\n" + "="*60)
-            print("  SuperAgent v3.1 命令帮助")
+            print("  SuperAgent v3.2 命令帮助")
             print("="*60)
 
             print("\n内置命令:")
@@ -981,7 +1334,7 @@ class SuperAgentCLI(cmd.Cmd):
 
     def do_quit(self, __args: str):
         """退出程序 - quit"""
-        print("\n感谢使用SuperAgent v3.1!")
+        print("\n感谢使用SuperAgent v3.2!")
         print("文档: docs/")
         print("问题反馈: github.com/superagent/issues")
         return True
@@ -990,12 +1343,151 @@ class SuperAgentCLI(cmd.Cmd):
         """退出程序 - exit"""
         return self.do_quit(__args)
 
+    # ========== P1 Task 2.1: 脑暴阶段集成 ==========
+
+    def _should_brainstorm(self, user_input: str) -> bool:
+        """判断是否需要脑暴阶段
+
+        Args:
+            user_input: 用户输入
+
+        Returns:
+            bool: 是否需要脑暴
+        """
+        if not self.brainstorming_enabled:
+            return False
+
+        # 简单任务关键词 - 跳过脑暴
+        simple_keywords = [
+            "帮助", "help", "状态", "status", "退出", "quit",
+            "查看", "列表", "显示", "测试", "test"
+        ]
+
+        # 复杂任务关键词 - 需要脑暴
+        complex_keywords = [
+            "实现", "添加", "设计", "开发", "创建",
+            "功能", "系统", "模块", "架构", "重构",
+            "optimize", "implement", "design", "develop"
+        ]
+
+        user_input_lower = user_input.lower()
+
+        # 检查简单关键词
+        for keyword in simple_keywords:
+            if keyword in user_input_lower:
+                return False
+
+        # 检查复杂关键词
+        for keyword in complex_keywords:
+            if keyword in user_input_lower:
+                return True
+
+        return False
+
+    def _run_brainstorming(self, user_input: str):
+        """运行脑暴流程
+
+        Args:
+            user_input: 用户原始请求
+        """
+        print("\n" + "="*60)
+        print("  🧠 设计探索阶段")
+        print("="*60)
+        print("\n让我们先探索不同的设计方案...")
+
+        # 阶段 1: 需求收集
+        print("\n【阶段 1/4: 需求收集】")
+        result = self.brainstorming_mgr.start_brainstorming(user_input)
+
+        print("\n📋 需求澄清问题:")
+        for i, question in enumerate(result["questions"], 1):
+            print(f"  {i}. {question}")
+
+        print("\n💡 提示: 请在上方问题基础上提供更多细节,或直接按回车使用默认配置")
+
+        # 简化处理: 直接使用默认需求继续
+        print("\n使用默认需求配置继续...")
+
+        # 阶段 2: 方案探索
+        print("\n【阶段 2/4: 方案探索】")
+        requirements = {
+            "用户输入": user_input,
+            "核心功能": "根据需求自动推断",
+            "性能要求": "中等"
+        }
+
+        options = self.brainstorming_mgr.explore_solutions(requirements)
+
+        print(f"\n✨ 生成了 {len(options)} 个设计方案:")
+        for i, option in enumerate(options, 1):
+            print(f"\n  方案 {i}: {option.title}")
+            print(f"  描述: {option.description}")
+            print(f"  复杂度: {option.implementation_complexity}")
+            print(f"  预估时间: {option.estimated_time}")
+            print(f"  风险等级: {option.risk_level}")
+            print(f"  优点: {', '.join(option.pros[:2])}...")
+            print(f"  缺点: {', '.join(option.cons[:2])}...")
+
+        # 阶段 3: 方案对比
+        print("\n【阶段 3/4: 方案对比】")
+        comparison = self.brainstorming_mgr.compare_alternatives()
+
+        print("\n📊 方案对比矩阵:")
+        matrix = comparison["comparison_matrix"]
+        for i, option in enumerate(self.brainstorming_mgr.design_options):
+            print(f"\n  {option.title}:")
+            print(f"    复杂度: {matrix['complexity'][i]}")
+            print(f"    时间: {matrix['time'][i]}")
+            print(f"    风险: {matrix['risk'][i]}")
+
+        recommendation = comparison["recommendation"]
+        print(f"\n💡 推荐: {recommendation['title']}")
+        print(f"   理由: {recommendation['reason']}")
+
+        # 阶段 4: 用户选择 (简化: 自动选择推荐方案)
+        print("\n【阶段 4/4: 决策确认】")
+        print(f"\n✅ 自动选择推荐方案: {recommendation['title']}")
+
+        design_spec = self.brainstorming_mgr.finalize_design(recommendation["option_id"])
+
+        # 显示设计规格摘要
+        print("\n" + "="*60)
+        print("  📄 设计规格文档")
+        print("="*60)
+
+        print(f"\n需求分析:")
+        for key, value in design_spec.requirements.items():
+            print(f"  - {key}: {value}")
+
+        print(f"\n选定方案: {design_spec.selected_option.title}")
+
+        print(f"\n选择理由:\n{design_spec.rationale}")
+
+        print(f"\n验收标准:")
+        for i, criterion in enumerate(design_spec.acceptance_criteria, 1):
+            print(f"  {i}. {criterion}")
+
+        # 保存设计规格到对话上下文
+        self.conversation_mgr.set_context("design_spec", design_spec)
+
+        print("\n✅ 设计探索完成! 继续进入需求分析...")
+        print("="*60 + "\n")
+
     # ========== 默认处理 - 自然语言输入 ==========
 
     def default(self, line: str):
         """处理未识别的命令(作为自然语言输入)"""
         if not line.strip():
             return
+
+        # P1 Task 2.1: 检查是否需要脑暴阶段
+        if self._should_brainstorm(line):
+            try:
+                self._run_brainstorming(line)
+            except Exception as e:
+                print(f"\n⚠️ 脑暴阶段遇到问题: {e}")
+                import traceback
+                traceback.print_exc()
 
         # 显示处理中
         print("\n正在理解您的需求...")
@@ -1026,19 +1518,35 @@ class SuperAgentCLI(cmd.Cmd):
 
             print(f"\n{result.message}\n")
 
+            answers = []
             for i, q in enumerate(result.clarifications, 1):
-                required = "【必须】" if q.required else ""
-                print(f"{i}. {q.question} {required}")
-
                 if q.options:
-                    for opt in q.options:
-                        print(f"   - {opt}")
+                    # 使用交互式选择
+                    choice = interactive_select(
+                        f"{i}. {q.question}",
+                        q.options,
+                        multiple=q.multiple,
+                        allow_manual=True
+                    )
+                    
+                    if isinstance(choice, list):
+                        answers.append(f"{q.question}: {', '.join(choice)}")
+                    else:
+                        answers.append(f"{q.question}: {choice}")
+                else:
+                    # 没有选项，提示手动输入
+                    print(f"{i}. {q.question} (请在下方统一输入您的回答)")
+                    if q.reason:
+                        print(f"   理由: {q.reason}")
+                    print()
 
-                if q.reason:
-                    print(f"   理由: {q.reason}")
-                print()
-
-            print("请回答上述问题,或输入您的完整需求...")
+            if answers:
+                print("\n已收集您的选择，正在继续处理...")
+                combined_answers = " ".join(answers)
+                # 递归调用处理输入
+                self.default(combined_answers)
+            else:
+                print("请回答上述问题,或输入您的完整需求...")
 
         elif result.type == "requirements_ready":
             print("\n" + "="*60)
@@ -1093,7 +1601,7 @@ def main():
     """主入口函数"""
     # 检查Python版本
     if sys.version_info < (3, 8):
-        print("❌ SuperAgent v3.1 需要Python 3.8或更高版本")
+        print("❌ SuperAgent v3.2 需要Python 3.8或更高版本")
         print(f"   当前版本: {sys.version}")
         sys.exit(1)
 

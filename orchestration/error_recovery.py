@@ -6,7 +6,6 @@
 智能错误处理、历史记忆查询、自动重试策略
 """
 
-import asyncio
 import logging
 import re
 from typing import Dict, Any, Optional, List
@@ -51,7 +50,7 @@ class ErrorSeverity(Enum):
     LOW = "low"           # 低: 可以忽略
     MEDIUM = "medium"     # 中: 需要处理但不致命
     HIGH = "high"         # 高: 必须处理
-    CRITICAL = "critical" # 严重: 阻塞执行
+    CRITICAL = "critical"  # 严重: 阻塞执行
 
 
 @dataclass
@@ -460,7 +459,7 @@ class RetryStrategy:
 class ErrorRecoverySystem:
     """
     错误恢复系统 (Error Recovery System)
-    
+
     核心功能:
         1. 错误分类: 识别语法、导入、网络等不同类型的错误。
         2. 严重程度评估: 根据错误类型和上下文评估对系统的影响。
@@ -575,7 +574,7 @@ class ErrorRecoverySystem:
         # 更新错误历史记录
         if task_id not in self.error_history:
             self.error_history[task_id] = []
-        
+
         self.error_history[task_id].append({
             "timestamp": datetime.now().isoformat(),
             "error_type": error_type.value,

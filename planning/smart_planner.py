@@ -15,17 +15,17 @@ from typing import List, Dict, Any, Optional, TYPE_CHECKING
 from datetime import timedelta
 from collections import OrderedDict
 
+from common.models import AgentType
+from orchestration.registry import AgentRegistry
 from planning.models import (
     Requirements, Step, ExecutionPlan, DependencyGraph,
     RequirementAnalysis, RiskReport
 )
-from common.models import AgentType
 from planning.planner import ProjectPlanner
-from orchestration.registry import AgentRegistry
 
 # 避免循环导入
 if TYPE_CHECKING:
-    from conversation import IntentRecognizer, IntentResult
+    from conversation.models import Intent
 
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ class SmartPlanner(ProjectPlanner):
         super().__init__()
 
         # 延迟导入避免循环依赖
-        from conversation import IntentRecognizer
+        from conversation.intent_recognizer import IntentRecognizer
 
         # 初始化智能意图识别器
         self.intent_recognizer = IntentRecognizer()
@@ -49,16 +49,18 @@ class SmartPlanner(ProjectPlanner):
         self._cache_ttl = 600  # 10分钟缓存
         self._max_cache_size = 100  # 最大缓存条数
 
-    async def create_smart_plan(
+    async def create_plan(
         self,
         user_input: str,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        intent: Optional[Any] = None
     ) -> ExecutionPlan:
-        """创建智能执行计划(带缓存)
+        """创建智能执行计划(带缓存) - 覆写基类方法以实现透明升级
 
         Args:
             user_input: 用户输入
             context: 对话上下文(可选)
+            intent: 预识别的意图(可选)
 
         Returns:
             ExecutionPlan: 智能生成的执行计划
@@ -66,6 +68,7 @@ class SmartPlanner(ProjectPlanner):
         # 1. 如果输入为空,返回空计划
         if not user_input.strip():
             logger.warning("规划器收到空输入")
+            from planning.models import DependencyGraph
             return ExecutionPlan(
                 requirements=Requirements(user_input="", features=[], clarifications={}),
                 steps=[],
@@ -96,8 +99,10 @@ class SmartPlanner(ProjectPlanner):
                 del self._plan_cache[cache_key]
 
         try:
-            # 2. 使用智能意图识别 (recognize 已经是异步方法)
-            intent_result = await self.intent_recognizer.recognize(user_input)
+            # 2. 意图识别 (如果未提供)
+            intent_result = intent
+            if intent_result is None:
+                intent_result = await self.intent_recognizer.recognize(user_input)
 
             # 3. 增强上下文
             enhanced_context = self._enhance_context(
@@ -105,33 +110,32 @@ class SmartPlanner(ProjectPlanner):
                 intent_result
             )
 
-            # 4. 生成基础计划
-            plan = await super().create_plan(user_input, enhanced_context)
+            # 4. 生成基础计划 (调用父类的逻辑，传入识别出的或预置的意图)
+            plan = await super().create_plan(user_input, enhanced_context, intent=intent_result)
 
             # 5. 智能优化计划
             plan = self._optimize_plan(plan, intent_result)
 
             # 存入缓存
             self._plan_cache[cache_key] = (plan, time.time())
-            
+
             # 控制缓存大小
             if len(self._plan_cache) > self._max_cache_size:
                 self._plan_cache.popitem(last=False)
 
             return plan
-        except (ValueError, json.JSONDecodeError, AttributeError) as e:
-            logger.error(f"智能规划参数或数据解析失败: {e}")
-            raise RuntimeError(f"规划器数据异常: {str(e)}") from e
-        except asyncio.CancelledError:
-            logger.warning("智能规划任务被取消")
-            raise
-        except (OSError, IOError) as e:
-            logger.error(f"智能规划过程中发生IO错误: {e}")
-            raise RuntimeError(f"系统IO异常: {str(e)}") from e
         except Exception as e:
-            logger.error(f"智能规划遇到非预期异常 ({type(e).__name__}): {e}", exc_info=True)
-            # 如果失败，尝试生成一个最基础的计划或抛出异常
-            raise RuntimeError(f"系统繁忙，无法生成执行计划 ({type(e).__name__}): {str(e)}") from e
+            logger.error(f"智能规划失败: {e}", exc_info=True)
+            # 降级处理: 尝试直接调用父类生成计划
+            return await super().create_plan(user_input, context, intent=intent)
+
+    async def create_smart_plan(
+        self,
+        user_input: str,
+        context: Optional[Dict[str, Any]] = None
+    ) -> ExecutionPlan:
+        """保持向后兼容的旧接口"""
+        return await self.create_plan(user_input, context)
 
     def _clean_expired_cache(self) -> None:
         """清理过期缓存"""
@@ -142,14 +146,14 @@ class SmartPlanner(ProjectPlanner):
         ]
         for k in expired_keys:
             del self._plan_cache[k]
-        
+
         if expired_keys:
             logger.debug(f"已清理 {len(expired_keys)} 条过期计划缓存")
 
     def _enhance_context(
         self,
         context: Dict[str, Any],
-        intent_result: 'IntentResult'
+        intent_result: 'Intent'
     ) -> Dict[str, Any]:
         """增强上下文信息
 
@@ -183,7 +187,7 @@ class SmartPlanner(ProjectPlanner):
     def _optimize_plan(
         self,
         plan: ExecutionPlan,
-        intent_result: 'IntentResult'
+        intent_result: 'Intent'
     ) -> ExecutionPlan:
         """优化执行计划
 
@@ -208,7 +212,7 @@ class SmartPlanner(ProjectPlanner):
     def _optimize_agent_types(
         self,
         plan: ExecutionPlan,
-        intent_result: 'IntentResult'
+        intent_result: 'Intent'
     ) -> ExecutionPlan:
         """优化Agent类型分配
 
@@ -255,23 +259,28 @@ class SmartPlanner(ProjectPlanner):
     def _optimize_step_order(
         self,
         plan: ExecutionPlan,
-        intent_result: 'IntentResult'
+        intent_result: 'Intent'
     ) -> ExecutionPlan:
         """优化步骤顺序 (基于Agent能力的通用匹配)"""
         if intent_result.suggested_steps:
             # 使用更通用的能力匹配逻辑，而非硬编码名称
             reordered_steps = []
-            
+
             # 建立能力到步骤的模糊匹配
             for suggested_step in intent_result.suggested_steps:
                 # 提取建议步骤的核心关键词 (去除序号)
-                clean_suggestion = suggested_step.split(". ", 1)[-1] if ". " in suggested_step else suggested_step
-                
+                if ". " in suggested_step:
+                    clean_suggestion = suggested_step.split(". ", 1)[-1]
+                else:
+                    clean_suggestion = suggested_step
+
                 # 在现有计划步骤中寻找语义最接近的
                 for step in plan.steps:
                     if step not in reordered_steps:
                         # 简单的包含匹配，未来可升级为向量相似度
-                        if clean_suggestion[:4] in step.name or clean_suggestion[:4] in step.description:
+                        name_match = clean_suggestion[:4] in step.name
+                        desc_match = clean_suggestion[:4] in step.description
+                        if name_match or desc_match:
                             reordered_steps.append(step)
 
             # 保持未匹配步骤的原始相对顺序
@@ -280,13 +289,13 @@ class SmartPlanner(ProjectPlanner):
                     reordered_steps.append(step)
 
             plan.steps = reordered_steps
-            
+
         return plan
 
     def _optimize_time_estimation(
         self,
         plan: ExecutionPlan,
-        intent_result: 'IntentResult'
+        intent_result: 'Intent'
     ) -> ExecutionPlan:
         """优化时间估算
 
@@ -321,7 +330,7 @@ class SmartPlanner(ProjectPlanner):
 
     async def generate_plan_from_intent(
         self,
-        intent_result: 'IntentResult',
+        intent_result: 'Intent',
         user_input: str
     ) -> ExecutionPlan:
         """从意图结果直接生成计划
@@ -360,12 +369,12 @@ class SmartPlanner(ProjectPlanner):
         Returns:
             Dict[str, Any]: 计划建议
         """
-        # 识别意图 (在线程池中执行同步操作)
-        intent_result = await asyncio.to_thread(self.intent_recognizer.recognize, user_input)
+        # 识别意图
+        intent_result = await self.intent_recognizer.recognize(user_input)
 
         # 生成建议
         suggestions = {
-            "primary_intent": intent_result.primary_intent,
+            "primary_intent": intent_result.type.value,
             "confidence": intent_result.confidence,
             "recommended_agents": [
                 {
@@ -385,12 +394,12 @@ class SmartPlanner(ProjectPlanner):
     def _get_agent_reasoning(
         self,
         agent_type: AgentType,
-        intent_result: 'IntentResult'
+        intent_result: 'Intent'
     ) -> str:
         """获取Agent类型推荐理由 (Phase 3 重构版：基于 Registry)"""
         return AgentRegistry.get_description(agent_type)
 
-    def _estimate_complexity(self, intent_result: 'IntentResult') -> str:
+    def _estimate_complexity(self, intent_result: 'Intent') -> str:
         """估算项目复杂度
 
         Args:
@@ -415,7 +424,7 @@ class SmartPlanner(ProjectPlanner):
             score += 1
 
         # 输入长度
-        if len(intent_result.primary_intent) > 50:
+        if len(intent_result.type.value) > 50:
             score += 1
 
         # 判定复杂度
@@ -449,8 +458,7 @@ class SmartPlanner(ProjectPlanner):
         # 生成MD5哈希
         return hashlib.md5(combined.encode('utf-8')).hexdigest()
 
-    def clear_cache(self):
+    def clear_cache(self) -> None:
         """清除计划缓存"""
         self._plan_cache.clear()
         logger.info("计划生成缓存已清除")
-

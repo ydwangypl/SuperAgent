@@ -7,7 +7,7 @@ Agent 注册中心 (Phase 3 重构核心)
 """
 
 import logging
-from typing import Dict, Type, List, Any, Optional
+from typing import Dict, Type, List, Optional
 from dataclasses import dataclass, field
 from common.models import AgentType
 from execution.base_agent import BaseAgent
@@ -17,6 +17,7 @@ from execution.documentation_agent import DocumentationAgent
 from execution.refactoring_agent import RefactoringAgent
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class AgentMetadata:
@@ -28,6 +29,7 @@ class AgentMetadata:
     max_concurrent: int = 5
     capabilities: List[str] = field(default_factory=list)
     keywords: List[str] = field(default_factory=list)  # 用于意图识别的关键词/正则
+
 
 class AgentRegistry:
     """Agent 注册中心 - 管理所有 Agent 的元数据与映射"""
@@ -45,13 +47,13 @@ class AgentRegistry:
         agents = [
             # 核心管理与设计
             AgentMetadata(
-                AgentType.PRODUCT_MANAGEMENT, CodingAgent, 
-                "负责产品需求分析、功能规划和 PRD 编写", 1, 3,
+                AgentType.PRODUCT_MANAGEMENT, CodingAgent,
+                "负责产品需求分析、功能规划和 PRD 编写 (支持 RICE/MoSCoW 框架)", 1, 3,
                 keywords=[r"需求|规划|prd|分析|产品|management|design"]
             ),
             AgentMetadata(
-                AgentType.DATABASE_DESIGN, CodingAgent, 
-                "负责数据库 Schema 设计、索引优化和数据建模", 2, 5,
+                AgentType.DATABASE_DESIGN, CodingAgent,
+                "负责数据库 Schema 设计、索引优化 and 数据建模", 2, 5,
                 keywords=[
                     r"数据库|database|schema|table|索引|migration",
                     r"sql|mysql|postgresql|mongodb|redis",
@@ -59,15 +61,15 @@ class AgentRegistry:
                 ]
             ),
             AgentMetadata(
-                AgentType.API_DESIGN, CodingAgent, 
-                "负责 RESTful/GraphQL API 接口定义和 Swagger 文档生成", 2, 5,
+                AgentType.API_DESIGN, CodingAgent,
+                "负责 RESTful/GraphQL API 接口定义 and Swagger 文档生成", 2, 5,
                 keywords=[r"api|接口|restful|graphql|swagger|endpoint|路由"]
             ),
 
             # 核心开发 (映射到 CodingAgent)
             AgentMetadata(
-                AgentType.BACKEND_DEV, CodingAgent, 
-                "负责服务端业务逻辑、数据处理和系统集成", 3, 10,
+                AgentType.BACKEND_DEV, CodingAgent,
+                "负责服务端业务逻辑、数据处理 and 系统集成", 3, 10,
                 keywords=[
                     r"后端|backend|服务端|server|后台",
                     r"业务逻辑|数据处理|微服务|功能|管理",
@@ -75,8 +77,8 @@ class AgentRegistry:
                 ]
             ),
             AgentMetadata(
-                AgentType.FRONTEND_DEV, CodingAgent, 
-                "负责 UI 组件开发、交互逻辑和前端架构", 3, 10,
+                AgentType.FRONTEND_DEV, CodingAgent,
+                "负责 UI 组件开发、交互逻辑 and 前端架构", 3, 10,
                 keywords=[
                     r"前端|frontend|界面|ui|页面",
                     r"react|vue|angular|组件",
@@ -84,7 +86,7 @@ class AgentRegistry:
                 ]
             ),
             AgentMetadata(
-                AgentType.FULL_STACK_DEV, CodingAgent, 
+                AgentType.FULL_STACK_DEV, CodingAgent,
                 "负责端到端的完整功能实现", 3, 8,
                 keywords=[
                     r"全栈|fullstack|前后端",
@@ -92,15 +94,15 @@ class AgentRegistry:
                 ]
             ),
             AgentMetadata(
-                AgentType.MINI_PROGRAM_DEV, CodingAgent, 
+                AgentType.MINI_PROGRAM_DEV, CodingAgent,
                 "负责小程序/移动端专用逻辑开发", 4, 5,
                 keywords=[r"小程序|微信小程序|uniapp|移动端|mobile"]
             ),
 
             # 质量与安全
             AgentMetadata(
-                AgentType.QA_ENGINEERING, TestingAgent, 
-                "负责单元测试、集成测试生成和自动化测试流程", 5, 10,
+                AgentType.QA_ENGINEERING, TestingAgent,
+                "负责单元测试、集成测试生成 and 自动化测试流程", 5, 10,
                 keywords=[
                     r"测试|test|单元测试|集成测试",
                     r"pytest|jest|测试用例|覆盖率",
@@ -108,20 +110,20 @@ class AgentRegistry:
                 ]
             ),
             AgentMetadata(
-                AgentType.SECURITY_AUDIT, CodingAgent, 
-                "负责代码安全扫描、漏洞识别和安全加固建议", 6, 3,
+                AgentType.SECURITY_AUDIT, CodingAgent,
+                "负责代码安全扫描、漏洞识别 and 安全加固建议", 6, 3,
                 keywords=[r"安全|扫描|漏洞|audit|security|加固|注入|xss"]
             ),
             AgentMetadata(
-                AgentType.CODE_REVIEW, CodingAgent, 
-                "负责自动化代码质量检查和风格一致性评审", 6, 5,
+                AgentType.CODE_REVIEW, CodingAgent,
+                "负责自动化代码质量检查 and 风格一致性评审", 6, 5,
                 keywords=[r"审查|评审|review|规范|质量|风格|lint"]
             ),
 
             # 运维与优化
             AgentMetadata(
-                AgentType.DEVOPS_ENGINEERING, CodingAgent, 
-                "负责 CI/CD 流水线配置、容器化和部署脚本生成", 7, 5,
+                AgentType.DEVOPS_ENGINEERING, CodingAgent,
+                "负责 CI/CD 流水线配置、容器化 and 部署脚本生成", 7, 5,
                 keywords=[
                     r"部署|deploy|ci|cd|docker|k8s",
                     r"运维|监控|日志|管道",
@@ -129,38 +131,38 @@ class AgentRegistry:
                 ]
             ),
             AgentMetadata(
-                AgentType.PERFORMANCE_OPTIMIZATION, CodingAgent, 
-                "负责系统瓶颈分析和代码/SQL 性能调优建议", 7, 3,
+                AgentType.PERFORMANCE_OPTIMIZATION, CodingAgent,
+                "负责系统瓶颈分析 and 代码/SQL 性能调优建议", 7, 3,
                 keywords=[r"性能|优化|调优|瓶颈|performance|吞吐量|并发"]
             ),
             AgentMetadata(
-                AgentType.INFRA_SETUP, CodingAgent, 
-                "负责基础设施即代码 (IaC) 和云资源初始化配置", 7, 3,
+                AgentType.INFRA_SETUP, CodingAgent,
+                "负责基础设施即代码 (IaC) and 云资源初始化配置", 7, 3,
                 keywords=[r"基础设施|iac|terraform|cloud|云资源|初始化"]
             ),
 
             # 专项处理
             AgentMetadata(
-                AgentType.TECHNICAL_WRITING, DocumentationAgent, 
-                "负责用户手册、技术文档、API 参考和架构说明的编写", 8, 5,
+                AgentType.TECHNICAL_WRITING, DocumentationAgent,
+                "负责用户手册、技术文档、API 参考 and 架构说明的编写", 8, 5,
                 keywords=[
                     r"文档|documentation|readme|指南",
                     r"api文档|使用手册|说明"
                 ]
             ),
             AgentMetadata(
-                AgentType.CODE_REFACTORING, RefactoringAgent, 
-                "负责既有代码的结构优化、模式改进和技术债清理", 8, 3,
+                AgentType.CODE_REFACTORING, RefactoringAgent,
+                "负责既有代码的结构优化、模式改进 and 技术债清理", 8, 3,
                 keywords=[r"重构|refactor|解耦|清晰|清理"]
             ),
             AgentMetadata(
-                AgentType.DATA_MIGRATION, CodingAgent, 
-                "负责数据迁移脚本编写和 ETL 逻辑实现", 8, 3,
+                AgentType.DATA_MIGRATION, CodingAgent,
+                "负责数据迁移脚本编写 and ETL 逻辑实现", 8, 3,
                 keywords=[r"迁移|migration|etl|导入|导出|同步"]
             ),
             AgentMetadata(
-                AgentType.UI_DESIGN, CodingAgent, 
-                "负责界面视觉设计、切图说明和样式表生成", 9, 3,
+                AgentType.UI_DESIGN, CodingAgent,
+                "负责界面视觉设计、切图说明 and 样式表生成", 9, 3,
                 keywords=[r"设计|视觉|切图|样式|css|less|sass|figma"]
             ),
         ]

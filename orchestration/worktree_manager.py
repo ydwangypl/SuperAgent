@@ -43,35 +43,23 @@ class GitWorktreeManager:
         branch_name: Optional[str] = None,
         from_branch: Optional[str] = None
     ) -> Path:
-        """创建新的worktree
-
-        Args:
-            task_id: 任务ID
-            branch_name: 分支名称(可选,默认为task-{task_id})
-            from_branch: 基于哪个分支创建(可选,默认为main分支)
-
-        Returns:
-            Path: worktree路径
-
-        Raises:
-            subprocess.CalledProcessError: Git命令执行失败
-        """
+        """创建新的worktree"""
         from common.security import validate_git_ref, validate_path, SecurityError
-        
+
         # 1. 确定并验证分支名称
         if not branch_name:
             branch_name = f"task-{task_id}"
-        
+
         try:
             branch_name = validate_git_ref(branch_name)
         except SecurityError as e:
             logger.error(f"非法分支名称: {branch_name}, 错误: {e}")
             raise
-            
+
         # 2. 确定并验证基础分支
         if not from_branch:
             from_branch = self.config.main_branch
-        
+
         try:
             from_branch = validate_git_ref(from_branch)
         except SecurityError as e:
@@ -82,7 +70,7 @@ class GitWorktreeManager:
         raw_worktree_path = self.worktree_base / self.config.naming_pattern.format(
             task_id=task_id
         )
-        
+
         try:
             worktree_path = validate_path(raw_worktree_path, self.worktree_base)
         except SecurityError as e:
@@ -125,7 +113,7 @@ class GitWorktreeManager:
     def remove_worktree(self, worktree_path: Path) -> bool:
         """移除worktree (增加安全性验证)"""
         from common.security import validate_path, SecurityError
-        
+
         try:
             # 验证路径是否在允许的 worktree 基础目录下
             worktree_path = validate_path(worktree_path, self.worktree_base)

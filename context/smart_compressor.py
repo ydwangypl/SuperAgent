@@ -44,6 +44,14 @@ class ExtractedInfo:
     requirements: List[str] = field(default_factory=list)
     decisions: List[str] = field(default_factory=list)
     constraints: List[str] = field(default_factory=list)
+    # 优先级映射 (数字越大优先级越高)
+    IMPORTANCE_MAP = {
+        "constraints": 5,
+        "requirements": 4,
+        "decisions": 3,
+        "tech": 2,
+        "product": 1
+    }
 
     def to_dict(self) -> Dict:
         return {
@@ -54,22 +62,58 @@ class ExtractedInfo:
             "constraints": self.constraints
         }
 
-    def to_summary(self) -> str:
-        """转换为摘要字符串(支持中英文)"""
-        lines = []
+    def to_summary(self, max_length: int = None) -> str:
+        """转换为摘要字符串(支持重要性剪裁)"""
+        if not max_length:
+            lines = []
+            if self.product: lines.append(f"产品/Product: {'; '.join(self.product[:3])}")
+            if self.tech: lines.append(f"技术/Tech: {'; '.join(self.tech[:3])}")
+            if self.requirements: lines.append(f"需求/Requirements: {'; '.join(self.requirements[:5])}")
+            if self.decisions: lines.append(f"决策/Decisions: {'; '.join(self.decisions[:3])}")
+            if self.constraints: lines.append(f"约束/Constraints: {'; '.join(self.constraints[:3])}")
+            return "\n".join(lines)
 
-        if self.product:
-            lines.append(f"产品/Product: {'; '.join(self.product[:3])}")
-        if self.tech:
-            lines.append(f"技术/Tech: {'; '.join(self.tech[:3])}")
-        if self.requirements:
-            lines.append(f"需求/Requirements: {'; '.join(self.requirements[:5])}")
-        if self.decisions:
-            lines.append(f"决策/Decisions: {'; '.join(self.decisions[:3])}")
-        if self.constraints:
-            lines.append(f"约束/Constraints: {'; '.join(self.constraints[:3])}")
-
-        return "\n".join(lines) if lines else ""
+        # 带有重要性剪裁的逻辑
+        categories = [
+            ("constraints", self.constraints, "约束/Constraints"),
+            ("requirements", self.requirements, "需求/Requirements"),
+            ("decisions", self.decisions, "决策/Decisions"),
+            ("tech", self.tech, "技术/Tech"),
+            ("product", self.product, "产品/Product")
+        ]
+        
+        # 按重要性降序排列
+        categories.sort(key=lambda x: self.IMPORTANCE_MAP.get(x[0], 0), reverse=True)
+        
+        result_lines = []
+        current_length = 0
+        
+        for cat_id, items, label in categories:
+            if not items:
+                continue
+            
+            # 尝试添加该分类
+            cat_text = f"{label}: {'; '.join(items[:5])}"
+            if current_length + len(cat_text) + 1 <= max_length:
+                result_lines.append(cat_text)
+                current_length += len(cat_text) + 1
+            else:
+                # 如果整类加不下，尝试只加一部分
+                remaining = max_length - current_length - len(label) - 2
+                if remaining > 10:
+                    partial_items = []
+                    temp_len = 0
+                    for item in items:
+                        if temp_len + len(item) + 2 <= remaining:
+                            partial_items.append(item)
+                            temp_len += len(item) + 2
+                        else:
+                            break
+                    if partial_items:
+                        result_lines.append(f"{label}: {'; '.join(partial_items)}...")
+                break
+                
+        return "\n".join(result_lines)
 
 
 class KeyInformationExtractor:
@@ -140,7 +184,7 @@ class KeyInformationExtractor:
 
     def extract(self, content: str) -> ExtractedInfo:
         """提取关键信息"""
-        info = ExtractedInfo()
+        extracted_info = ExtractedInfo()
 
         for category, patterns in self.patterns.items():
             for pattern in patterns:
@@ -151,14 +195,14 @@ class KeyInformationExtractor:
                         match = ' '.join(str(g) for g in match if g)
                     match = str(match).strip()
                     if match and len(match) < 500:  # 避免过长匹配
-                        if match not in getattr(info, category):
-                            getattr(info, category).append(match)
+                        if match not in getattr(extracted_info, category):
+                            getattr(extracted_info, category).append(match)
 
-        return info
+        return extracted_info
 
-    def format_extracted(self, info: ExtractedInfo) -> str:
+    def format_extracted(self, extracted_info: ExtractedInfo) -> str:
         """格式化提取的信息"""
-        return info.to_summary()
+        return extracted_info.to_summary()
 
 
 class SemanticCompressor:
@@ -175,7 +219,7 @@ class SemanticCompressor:
 
         # 1. 提取关键信息
         extracted = self.kie.extract(content)
-        compressed = self.kie.format_extracted(extracted)
+        compressed = extracted.to_summary(max_length)
 
         # 2. 移除冗余
         compressed = self._remove_redundancy(compressed)
@@ -433,12 +477,15 @@ class SmartContextCompressor:
             for field_name in focus:
                 if hasattr(info, field_name):
                     setattr(filtered_info, field_name, getattr(info, field_name))
-            compressed = filtered_info.to_summary()
-
-        # 3. 估算目标长度并进一步截断
-        target_chars = int(len(content) * target_ratio)
-        if len(compressed) > target_chars:
-            compressed = self.semantic_compressor._truncate_intelligently(compressed, target_chars)
+            
+            # 计算目标字符数并使用重要性剪裁
+            target_chars = int(len(content) * target_ratio)
+            compressed = filtered_info.to_summary(max_length=target_chars)
+        else:
+            # 3. 估算目标长度并进一步截断
+            target_chars = int(len(content) * target_ratio)
+            if len(compressed) > target_chars:
+                compressed = self.semantic_compressor._truncate_intelligently(compressed, target_chars)
 
         # 计算统计信息(相对于原始内容)
         stats = CompressionStats(
