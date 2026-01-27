@@ -6,7 +6,6 @@
 增强的规划功能,集成意图识别,自动生成智能执行计划
 """
 
-import asyncio
 import hashlib
 import json
 import logging
@@ -68,7 +67,6 @@ class SmartPlanner(ProjectPlanner):
         # 1. 如果输入为空,返回空计划
         if not user_input.strip():
             logger.warning("规划器收到空输入")
-            from planning.models import DependencyGraph
             return ExecutionPlan(
                 requirements=Requirements(user_input="", features=[], clarifications={}),
                 steps=[],

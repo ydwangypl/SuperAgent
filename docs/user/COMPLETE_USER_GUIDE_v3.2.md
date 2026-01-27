@@ -1,7 +1,7 @@
 # 📖 SuperAgent v3.2 完整使用指南
 
 > **版本**: v3.2.0
-> **更新日期**: 2026-01-14
+> **更新日期**: 2026-01-19
 > **适用对象**: 所有用户
 
 ---
@@ -33,6 +33,38 @@ git checkout v3.2.0
 
 # 安装依赖
 pip install -r requirements.txt
+```
+
+### 导入方式
+
+SuperAgent v3.2 提供**简洁导入**和**详细导入**两种方式：
+
+#### 方式1：简洁导入（推荐）
+
+```python
+from SuperAgent import Orchestrator, AgentFactory, AgentType
+
+# 创建编排器
+orchestrator = Orchestrator(Path("/path/to/project"))
+
+# 创建 Agent
+agent = AgentFactory().create_agent(AgentType.FULL_STACK_DEV, "MyAgent")
+```
+
+#### 方式2：详细导入（完全控制）
+
+```python
+from pathlib import Path
+from orchestration.orchestrator import Orchestrator
+from orchestration.agent_factory import AgentFactory
+from orchestration.models import OrchestrationConfig
+from common.models import AgentType
+
+# 创建编排器
+orchestrator = Orchestrator(
+    project_root=Path("/path/to/project"),
+    config=OrchestrationConfig()  # 使用默认配置
+)
 ```
 
 ### 基础配置
@@ -860,5 +892,5 @@ if __name__ == "__main__":
 ---
 
 **版本**: v3.2.0
-**更新**: 2026-01-14
+**更新**: 2026-01-19
 **维护**: SuperAgent Team

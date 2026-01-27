@@ -44,6 +44,11 @@ DEFAULT_MAX_ITERATIONS = 3
 DEFAULT_SINGLE_TASK_MAX_FILES = 5
 DEFAULT_SINGLE_TASK_MAX_FILE_SIZE_KB = 100
 
+# 测试配置
+DEFAULT_ENABLE_TESTING = True
+DEFAULT_TEST_PATH = None
+DEFAULT_FAIL_ON_TEST_FAILURE = False
+
 
 class ExecutionPriority(Enum):
     """执行优先级"""
@@ -295,6 +300,18 @@ class TokenBudgetConfig:
 
 
 @dataclass
+class TestingConfig:
+    """测试执行配置 (方案A)"""
+    enabled: bool = DEFAULT_ENABLE_TESTING      # 是否启用自动测试
+    test_path: Optional[str] = DEFAULT_TEST_PATH  # 测试路径 (None=所有测试)
+    fail_on_failure: bool = DEFAULT_FAIL_ON_TEST_FAILURE  # 测试失败是否导致任务失败
+    coverage: bool = False                       # 是否生成覆盖率报告
+    markers: Optional[List[str]] = None          # pytest markers 过滤
+    verbose: bool = True                         # 是否详细输出
+    timeout: int = 300                           # 测试超时(秒)
+
+
+@dataclass
 class OrchestrationConfig:
     """编排配置"""
     # 并发配置
@@ -340,6 +357,9 @@ class OrchestrationConfig:
     # Token 预算配置
     token_budget: TokenBudgetConfig = field(default_factory=TokenBudgetConfig)
 
+    # 测试配置 (方案A)
+    testing: TestingConfig = field(default_factory=TestingConfig)
+
 
 @dataclass
 class ProjectExecutionResult:
@@ -361,6 +381,9 @@ class ProjectExecutionResult:
 
     # 代码审查结果
     code_review_summary: Optional[Dict[str, Any]] = None     # 代码审查摘要
+
+    # 测试结果 (方案A)
+    test_summary: Optional[Dict[str, Any]] = None            # 测试执行摘要
 
     # 错误信息
     errors: List[str] = field(default_factory=list)

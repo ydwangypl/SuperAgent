@@ -1,7 +1,7 @@
-# SuperAgent v3.2 重构后使用指南
+# 🚀 SuperAgent v3.4 使用指南 (重构版)
 
-**版本**: 3.2
-**更新日期**: 2026-01-14
+> **版本**: v3.4.0
+> **更新日期**: 2026-01-28
 
 ---
 
@@ -9,24 +9,21 @@
 
 ### 方式1: 使用统一适配器 (推荐)
 
-最简单的方式 - 一行代码完成执行和审查:
+在 v3.4 中，你可以直接从 `SuperAgent` 根包导入 `UnifiedAdapter`。这是最简单的方式 - 一行代码完成执行和审查:
 
 ```python
 from pathlib import Path
-from adapters import UnifiedAdapter
+from SuperAgent import UnifiedAdapter
 
 # 初始化
 adapter = UnifiedAdapter(Path("/path/to/project"))
 
 # 执行任务并自动审查
-result = await adapter.execute_and_review(
-    task_type="code",
+result = adapter.execute_task(
+    task_type="coding",
     task_data={
         "description": "创建用户管理API",
         "requirements": ["RESTful", "JWT认证"]
-    },
-    review_config={
-        "enable_iterative": True  # 启用Ralph Wiggum循环改进
     }
 )
 

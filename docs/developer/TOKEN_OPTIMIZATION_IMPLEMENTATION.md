@@ -54,7 +54,39 @@
 | 趋势分析 | 每日使用趋势可视化 |
 | 数据导出 | 支持 CSV 格式导出 |
 
-## 📊 测试结果
+## 🚀 进阶：按需加载与 Token 隔离 (V3.2 新增)
+
+为了解决复杂项目中 SubAgent 过多导致的 Token 消耗问题，我们实现了以下进阶策略：
+
+### 1. 按需加载 (Lazy Loading)
+- **原理**: `AgentRegistry` 在初始化时不再直接导入所有 `SubAgent` 类，而是存储类路径字符串。
+- **触发**: 只有当 `AgentFactory` 真正需要实例化某个 Agent 时，才会通过 `importlib` 动态加载对应的模块。
+- **收益**: 降低启动内存占用，避免未使用的 Agent 逻辑干扰上下文。
+
+### 2. 上下文自动优化
+- **原理**: 在 `BaseAgent.execute` 阶段自动触发 `_optimize_context`。
+- **策略**: 
+  - 任务描述 > 1000 字符时，使用 `SmartContextCompressor` 进行语义压缩。
+  - 历史结果 > 3 条时，仅保留最近 3 条的关键信息。
+- **收益**: 确保发送给 LLM 的 Context 始终保持精简。
+
+---
+
+## ❓ 核心问题解答
+
+### Q1: 项目功能多，SubAgent 会被全部加载吗？
+**不会。** 我们采用了 **Lazy Loading (按需加载)** 策略：
+- `AgentRegistry` 在启动时仅加载轻量级的元数据（描述、关键词）。
+- 具体的 `SubAgent` 类（如 `CodingAgent`, `TestingAgent`）只有在分配到具体任务时，才会通过 `importlib` 动态导入。
+- 调用结束后，如果 Agent 被销毁，相关内存也会被释放。
+
+### Q2: 调用一次 Agent 会加载一次吗？对 Token 消耗大吗？
+- **加载开销**: Python 的模块加载有缓存机制，第二次调用同一个类型的 Agent 时，模块已在 `sys.modules` 中，开销极小。
+- **Token 消耗**: 我们通过 **智能上下文压缩** 确保每个 Agent 仅接收与其任务相关的、精简后的信息。每个 SubAgent 的 Token 消耗是隔离且优化的，不会因为项目功能多而线性增加。
+
+---
+
+## 📊 测试与验证
 
 ```
 SmartContextCompressor Tests:

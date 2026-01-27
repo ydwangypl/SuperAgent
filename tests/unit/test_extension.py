@@ -18,8 +18,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.executor import Task, TaskStatus
 from core.reviewer import Artifact, ReviewStatus
-from extensions.writing_executor import WritingExecutor
-from extensions.content_reviewer import ContentReviewer
+from extensions.executors.writing_executor import WritingExecutor
+from extensions.reviewers.content_reviewer import ContentReviewer
 
 
 class TestWritingExecutor:
@@ -382,10 +382,10 @@ class TestArchitectureValidation:
     def test_no_dependency_on_agent_system(self):
         """验证不依赖Agent系统"""
         # WritingExecutor不应该导入任何Agent相关模块
-        import extensions.writing_executor
+        from extensions.executors import writing_executor
         import inspect
 
-        source = inspect.getsource(extensions.writing_executor)
+        source = inspect.getsource(writing_executor)
         # 检查不导入核心Agent模块
         assert "execution.base_agent" not in source
         assert "orchestration.agent_factory" not in source
@@ -394,10 +394,10 @@ class TestArchitectureValidation:
     def test_no_dependency_on_code_reviewer(self):
         """验证不依赖代码审查系统"""
         # ContentReviewer不应该导入代码审查相关模块
-        import extensions.content_reviewer
+        from extensions.reviewers import content_reviewer
         import inspect
 
-        source = inspect.getsource(extensions.content_reviewer)
+        source = inspect.getsource(content_reviewer)
         assert "review.reviewer" not in source
         assert "review.ralph_wiggum" not in source
         assert "CodeReviewer" not in source

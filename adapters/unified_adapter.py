@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .executor_adapter import ExecutorAdapter
 from .reviewer_adapter import ReviewerAdapter
+from .test_adapter import TestAdapter
 
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ class UnifiedAdapter:
         self.project_root = project_root
         self.executor = ExecutorAdapter(project_root)
         self.reviewer = ReviewerAdapter(project_root)
+        self.tester = TestAdapter(project_root)  # 方案B：独立测试API
 
     async def execute_task(
         self,
@@ -361,5 +363,213 @@ class UnifiedAdapter:
                     lines.append(f"   - 严重: {critical_count}个")
                 if major_count > 0:
                     lines.append(f"   - 重要: {major_count}个")
+
+        return "\n".join(lines)
+
+    # ============ 方案B: 独立测试API ============
+
+    async def run_tests(
+        self,
+        test_path: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        独立的测试执行接口
+
+        这是方案B的核心功能之一,允许独立运行测试而不需要执行任务。
+
+        Args:
+            test_path: 测试路径 (可选,默认运行所有测试)
+            config: 配置选项
+                - verbose: bool = True
+                - coverage: bool = False
+                - markers: Optional[List[str]] = None
+                - collect_only: bool = False
+
+        Returns:
+            测试结果字典:
+                - status: str
+                - success: bool
+                - total_tests: int
+                - passed: int
+                - failed: int
+                - errors: int
+                - duration_seconds: float
+                - output: str
+                - coverage: Optional[float]
+        """
+        logger.info(f"Running tests: path={test_path}")
+        return await self.tester.run_tests(test_path, config)
+
+    def run_tests_sync(
+        self,
+        test_path: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        同步版本的测试执行接口
+
+        Args:
+            test_path: 测试路径
+            config: 配置选项
+
+        Returns:
+            测试结果字典
+        """
+        logger.info(f"Running tests (sync): path={test_path}")
+        return self.tester.run_tests_sync(test_path, config)
+
+    async def execute_and_review_and_test(
+        self,
+        task_type: str,
+        task_data: Dict[str, Any],
+        review_config: Optional[Dict[str, Any]] = None,
+        test_config: Optional[Dict[str, Any]] = None,
+        execution_context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        执行 + 审查 + 测试 完整工作流
+
+        这是方案B的完整功能,执行任务、自动审查、并运行测试。
+
+        Args:
+            task_type: 任务类型
+            task_data: 任务数据
+            review_config: 审查配置 (可选)
+            test_config: 测试配置 (可选)
+            execution_context: 执行上下文 (可选)
+
+        Returns:
+            综合结果字典:
+                - execution: Dict (执行结果)
+                - review: Optional[Dict] (审查结果)
+                - test: Dict (测试结果)
+                - summary: str (总结)
+        """
+        logger.info(f"Execute + Review + Test: task_type={task_type}")
+
+        # 1. 执行任务
+        exec_result = await self.execute_task(task_type, task_data, execution_context)
+
+        # 2. 提取生成的文件
+        code_content = self._extract_code_for_review(exec_result)
+
+        # 3. 审查
+        review_result = None
+        if code_content:
+            logger.info("Executing review on generated content")
+            review_result = await self.review_code(
+                artifact_data={"content": code_content},
+                config=review_config
+            )
+
+        # 4. 测试
+        logger.info("Running tests")
+        test_result = await self.run_tests(test_path=None, config=test_config)
+
+        # 5. 生成总结
+        summary = self._generate_full_summary(exec_result, review_result, test_result)
+
+        return {
+            "execution": exec_result,
+            "review": review_result,
+            "test": test_result,
+            "summary": summary
+        }
+
+    def execute_and_review_and_test_sync(
+        self,
+        task_type: str,
+        task_data: Dict[str, Any],
+        review_config: Optional[Dict[str, Any]] = None,
+        test_config: Optional[Dict[str, Any]] = None,
+        execution_context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        同步版本的执行+审查+测试完整工作流
+
+        Args:
+            task_type: 任务类型
+            task_data: 任务数据
+            review_config: 审查配置
+            test_config: 测试配置
+            execution_context: 执行上下文
+
+        Returns:
+            综合结果字典
+        """
+        logger.info(f"Execute + Review + Test (sync): task_type={task_type}")
+
+        # 1. 执行任务
+        exec_result = self.execute_task_sync(task_type, task_data, execution_context)
+
+        # 2. 提取生成的文件
+        code_content = self._extract_code_for_review(exec_result)
+
+        # 3. 审查
+        review_result = None
+        if code_content:
+            review_result = self.review_code_sync(
+                artifact_data={"content": code_content},
+                config=review_config
+            )
+
+        # 4. 测试
+        test_result = self.run_tests_sync(test_path=None, config=test_config)
+
+        # 5. 生成总结
+        summary = self._generate_full_summary(exec_result, review_result, test_result)
+
+        return {
+            "execution": exec_result,
+            "review": review_result,
+            "test": test_result,
+            "summary": summary
+        }
+
+    def _generate_full_summary(
+        self,
+        exec_result: Dict[str, Any],
+        review_result: Optional[Dict[str, Any]],
+        test_result: Dict[str, Any]
+    ) -> str:
+        """
+        生成执行+审查+测试的完整总结
+
+        Args:
+            exec_result: 执行结果
+            review_result: 审查结果
+            test_result: 测试结果
+
+        Returns:
+            总结文本
+        """
+        lines = []
+
+        # 执行总结
+        if exec_result.get("success"):
+            lines.append("任务执行成功")
+        else:
+            lines.append(f"任务执行失败: {exec_result.get('error', 'Unknown error')}")
+
+        # 审查总结
+        if review_result:
+            if review_result.get("approved"):
+                lines.append(f"代码审查通过 (评分: {review_result.get('overall_score', 0):.1f})")
+            else:
+                lines.append(f"代码需要改进 (评分: {review_result.get('overall_score', 0):.1f})")
+
+        # 测试总结
+        if test_result:
+            if test_result.get("success"):
+                lines.append(
+                    f"测试通过 ({test_result.get('passed', 0)}/"
+                    f"{test_result.get('total_tests', 0)} tests)"
+                )
+            else:
+                lines.append(
+                    f"测试失败 ({test_result.get('failed', 0)}/"
+                    f"{test_result.get('total_tests', 0)} tests)"
+                )
 
         return "\n".join(lines)

@@ -399,11 +399,6 @@ $ superagent init
   - [ ] 显示进度报告
   - [ ] 询问是否继续
 
-- [ ] **Task 6.3**: 添加进度通知 (可选,2 小时)
-  - [ ] 实现 `WebhookNotifier`
-  - [ ] 支持 N8N webhook
-  - [ ] 配置文件支持
-
 - [ ] **Task 6.4**: 单元测试 (1 小时)
   - [ ] 测试会话检测
   - [ ] 测试进度显示
@@ -417,7 +412,6 @@ $ superagent init
 - ✅ `orchestration/session_manager.py` (约 150 行)
 - ✅ `cli/superagent.py` (修改)
 - ✅ `tests/unit/test_session_manager.py` (约 100 行)
-- ✅ Webhook 通知器 (可选)
 
 #### **验收标准**
 

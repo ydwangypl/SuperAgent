@@ -45,16 +45,24 @@ class AgentType(Enum):
     
     # 质量与安全
     QA_ENGINEERING = "qa-engineering"
+    TESTING = "testing"  # v3.3: 添加 TESTING 别名，与 QA_ENGINEERING 相同
     SECURITY_AUDIT = "security-audit"
     CODE_REVIEW = "code-review"
-    
+
     # 运维与优化
+    DEVOPS = "devops"  # v3.3: 添加 DEVOPS 别名，与 DEVOPS_ENGINEERING 相同
     DEVOPS_ENGINEERING = "devops-engineering"
     PERFORMANCE_OPTIMIZATION = "performance-optimization"
     INFRA_SETUP = "infra-setup"
-    
+
     # 专项处理
+    DOCUMENTATION = "documentation"  # v3.3: 添加 DOCUMENTATION 别名
     TECHNICAL_WRITING = "technical-writing"
+    REFACTORING = "refactoring"  # v3.3: 添加 REFACTORING 别名，与 CODE_REFACTORING 相同
     CODE_REFACTORING = "code-refactoring"
     DATA_MIGRATION = "data-migration"
     UI_DESIGN = "ui-design"
+
+    # 自动化
+    N8N_AUTOMATION = "n8n-automation"
+    PROMPT_ARCHITECT = "prompt-architect"

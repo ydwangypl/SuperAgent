@@ -35,14 +35,14 @@ from utils.interactive import interactive_select
 from utils.ui import UIUtils
 
 # 导入配置管理
-from config import load_config, save_config, SuperAgentConfig
+from config.settings import load_config, save_config, SuperAgentConfig
 
 
 class SuperAgentCLI(cmd.Cmd):
     """SuperAgent命令行界面"""
 
     # --- 常量定义 ---
-    VERSION = "v3.2"
+    VERSION = "v3.4"
     
     # 颜色常量
     COLOR_PROMPT = "\033[1;32m"  # 绿色
@@ -108,6 +108,11 @@ class SuperAgentCLI(cmd.Cmd):
         self.orchestrator = None
         self.current_plan = None
         self.last_result = None
+
+        # 初始化项目引导器 (v3.4)
+        from server.interaction_service import ProjectGuide
+        self.project_guide = ProjectGuide(project_root=self.project_root)
+        self.guide_mode = False  # 是否处于项目引导模式
 
     def _update_ui_by_experience(self):
         """根据用户经验等级更新 UI 元素"""
@@ -1292,6 +1297,7 @@ class SuperAgentCLI(cmd.Cmd):
             print("  quit/exit  - 退出程序")
 
             print("\n项目管理:")
+            print("  guide      - 分阶段引导开发大型项目")
             print("  execute    - 执行当前生成的计划")
             print("  result     - 查看执行结果")
             print("              - result tasks  显示任务详情")
@@ -1334,7 +1340,7 @@ class SuperAgentCLI(cmd.Cmd):
 
     def do_quit(self, __args: str):
         """退出程序 - quit"""
-        print("\n感谢使用SuperAgent v3.2!")
+        print("\n感谢使用SuperAgent v3.4!")
         print("文档: docs/")
         print("问题反馈: github.com/superagent/issues")
         return True
@@ -1342,6 +1348,27 @@ class SuperAgentCLI(cmd.Cmd):
     def do_exit(self, __args: str):
         """退出程序 - exit"""
         return self.do_quit(__args)
+
+    def do_guide(self, args: str):
+        """进入项目引导模式 - guide [项目描述]
+
+        使用分阶段引导方式开发大型项目。
+        示例:
+          guide                     # 进入引导模式
+          guide 开发一个电商网站     # 直接描述项目
+        """
+        if args.strip():
+            # 如果有参数，直接开始引导
+            self._run_project_guide(args.strip())
+        else:
+            # 否则显示欢迎信息并等待输入
+            print("\n" + "="*60)
+            print("  项目引导模式 (v3.4)")
+            print("="*60)
+            print("\n请描述您想要开发的项目:")
+            print("  例如: 开发一个社交媒体分析工具")
+            print("  例如: 创建一个任务管理系统")
+            print("\n输入 'cancel' 可取消引导模式")
 
     # ========== P1 Task 2.1: 脑暴阶段集成 ==========
 
@@ -1480,6 +1507,11 @@ class SuperAgentCLI(cmd.Cmd):
         if not line.strip():
             return
 
+        # v3.4: 检查是否需要使用项目引导模式（大型项目）
+        if self._should_use_guide_mode(line):
+            self._run_project_guide(line)
+            return
+
         # P1 Task 2.1: 检查是否需要脑暴阶段
         if self._should_brainstorm(line):
             try:
@@ -1506,6 +1538,117 @@ class SuperAgentCLI(cmd.Cmd):
             print(f"\n错误 (未知类型): {e}")
             import traceback
             traceback.print_exc()
+
+    def _should_use_guide_mode(self, line: str) -> bool:
+        """检查是否应该使用项目引导模式
+
+        v3.4 重构：使用 IntentRecognizer 检测意图类型
+        - NEW_PROJECT (新建项目) → 引导模式
+        - ADD_FEATURE (添加功能) → 引导模式（如果是复杂功能）
+        - FIX_BUG (修复bug) → 直接执行
+        - QUERY (查询) → 直接响应
+
+        这样确保所有项目创建请求都能被引导，而不仅仅是特定关键词组合。
+        """
+        # 简单任务关键词 - 跳过引导，直接执行
+        skip_guide_keywords = [
+            # 帮助/状态命令
+            "帮助", "help", "状态", "status", "退出", "quit", "exit",
+            "查看", "列表", "显示", "show", "list",
+            # 简单修复类
+            "修复", "fix", "bug", "报错", "错误", "error",
+            # 配置类
+            "配置", "config", "设置", "setting",
+            # 退出/取消
+            "取消", "cancel", "不用", "算了",
+        ]
+
+        line_lower = line.lower()
+
+        # 检查是否应该跳过引导
+        for keyword in skip_guide_keywords:
+            if keyword.lower() in line_lower:
+                return False
+
+        # 使用 IntentRecognizer 检测意图类型
+        try:
+            intent = asyncio.run(self.conversation_mgr.intent_recognizer.recognize(line))
+
+            # NEW_PROJECT 意图 → 进入引导模式
+            if intent.type.value == "new_project":
+                return True
+
+            # ADD_FEATURE 意图且置信度较高 → 进入引导模式
+            if intent.type.value == "add_feature" and intent.confidence >= 0.6:
+                return True
+
+            # 其他意图类型 → 不进入引导模式
+            return False
+
+        except Exception:
+            # 如果意图识别失败，使用关键词回退
+            # 项目关键词检测
+            project_keywords = [
+                "开发", "创建", "做一个", "搭建", "开发一个",
+                "build", "create", "develop", "make",
+                "网站", "系统", "应用", "平台", "项目", "工具",
+                "website", "system", "app", "application", "platform", "project"
+            ]
+
+            keyword_count = sum(1 for kw in project_keywords if kw.lower() in line_lower)
+            return keyword_count >= 1  # 只要有1个项目关键词就引导
+
+    def _run_project_guide(self, user_input: str):
+        """运行项目引导模式"""
+        print("\n" + "="*60)
+        print("  项目引导模式 (v3.4)")
+        print("="*60)
+        print("\n我将分阶段引导您完成项目开发，请逐步回答我的问题。\n")
+
+        # 如果是初始阶段，显示欢迎信息
+        if self.project_guide.current_phase.value == "init":
+            print(self.project_guide.get_welcome_message())
+
+        # 处理用户输入
+        result = self.project_guide.handle_input(user_input)
+
+        # 显示响应
+        print(f"\n{'='*60}")
+        print(f"  {self.project_guide._get_phase_name()}")
+        print(f"{'='*60}")
+        print(result["message"])
+
+        # 如果需要执行操作
+        if result.get("action") == "research":
+            print("\n正在执行产品研究...")
+            # 这里可以调用 ProductAgent
+            print("（产品研究功能需要在完整配置下使用）")
+
+        elif result.get("action") == "develop":
+            print("\n正在准备代码开发...")
+            # 这里可以调用 CodingAgent
+            print("（代码开发功能需要在完整配置下使用）")
+
+        elif result.get("action") == "test":
+            print("\n正在执行测试...")
+            print("（测试功能需要在完整配置下使用）")
+
+        elif result.get("action") == "complete":
+            print("\n" + "="*60)
+            print("  项目开发完成！")
+            print("="*60)
+
+            # 显示项目摘要
+            info = self.project_guide.project_info
+            print(f"\n项目描述: {info.get('description', 'N/A')}")
+            print(f"需求: {info.get('requirements', 'N/A')}")
+            print(f"设计: {info.get('design', 'N/A')}")
+
+            # 重置引导器
+            self.project_guide = self.project_guide.__class__(
+                project_root=self.project_root
+            )
+            print("\n已准备好开始新项目，输入 'guide' 可重新进入引导模式。")
 
     # ========== 辅助方法 ==========
 

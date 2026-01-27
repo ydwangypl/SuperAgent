@@ -1,8 +1,34 @@
 # SuperAgent 开发者指南
 
-本文档旨在为开发者提供 SuperAgent v3.2 的核心组件 API 说明及扩展指南。
+本文档旨在为开发者提供 SuperAgent v3.4 的核心组件 API 说明及扩展指南。
 
-## 1. 安全验证 (SecurityValidator)
+## 1. 统一适配器 (UnifiedAdapter) - v3.4 推荐
+
+`UnifiedAdapter` 是 v3.4 引入的简化接口，封装了复杂的编排逻辑。
+
+```python
+from SuperAgent import UnifiedAdapter
+adapter = UnifiedAdapter(project_root=Path("."))
+```
+
+---
+
+## 2. 扩展模块化 (Extensions)
+
+在 v3.4 中，`extensions/` 目录进行了模块化重构。
+
+### 2.1 目录结构
+- `extensions/executors/`: 存放自定义执行器（如 `WritingExecutor`）。
+- `extensions/reviewers/`: 存放自定义审查器（如 `ContentReviewer`）。
+- `extensions/hooks/`: 存放生命周期钩子（如 `ReReadPlanHook`）。
+- `extensions/state_persistence/`: 存放会话状态管理（`SessionManager`）。
+
+### 2.2 注册自定义扩展
+所有扩展必须在 `orchestration/registry.py` 中注册才能被 `AgentFactory` 识别。
+
+---
+
+## 3. 安全验证 (SecurityValidator)
 
 `SecurityValidator` 位于 `common/security.py`，是系统安全的第一道防线。
 

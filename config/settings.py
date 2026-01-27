@@ -4,15 +4,41 @@
 SuperAgent v3.2 配置管理模块
 
 提供统一的配置管理接口
+
+v3.3 新增: 环境变量配置支持
 """
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Optional, Dict, Any
+from urllib.parse import urlparse
 from pydantic import BaseModel, Field, field_validator
 
+from common.exceptions import SecurityError
+
 logger = logging.getLogger(__name__)
+
+
+# v3.3: 环境变量配置键名映射
+# v3.3 安全增强：敏感字段列表，用于日志脱敏
+_SENSITIVE_ENV_KEYS = frozenset({"PASSWORD", "SECRET", "TOKEN", "KEY"})
+
+ENV_CONFIG_MAPPING: Dict[str, tuple[str, Optional[str]]] = {
+    "SUPERAGENT_LOG_LEVEL": ("logging", "level"),
+    "SUPERAGENT_LOG_FILE": ("logging", "file_path"),
+    "SUPERAGENT_REDIS_URL": ("distribution", "broker_url"),
+    "SUPERAGENT_REDIS_PASSWORD": ("distribution", "redis_password"),
+    "SUPERAGENT_REDIS_REQUIRE_AUTH": ("distribution", "require_auth"),
+    "SUPERAGENT_WORKER_CONCURRENCY": ("distribution", "worker_concurrency"),
+    "SUPERAGENT_MEMORY_ENABLED": ("memory", "enabled"),
+    "SUPERAGENT_MEMORY_RETENTION_DAYS": ("memory", "retention_days"),
+    "SUPERAGENT_ORCHESTRATION_PARALLEL": ("orchestration", "enable_parallel_execution"),
+    "SUPERAGENT_ORCHESTRATION_MAX_TASKS": ("orchestration", "max_parallel_tasks"),
+    "SUPERAGENT_TOKEN_OPT_ENABLED": ("token_optimization", "enabled"),
+    "SUPERAGENT_EXPERIENCE_LEVEL": ("experience_level", None),
+}
 
 
 class MemoryConfig(BaseModel):
@@ -78,14 +104,10 @@ class OrchestrationConfig(BaseModel):
 
     # Agent 超时配置 (秒)
     agent_timeout_seconds: int = Field(default=300, ge=30, le=3600)
-
-    # Agent 重试配置
-    agent_retry_count: int = Field(default=3, ge=0, le=10)
     agent_retry_delay_seconds: int = Field(default=5, ge=1, le=60)
 
 
 class LoggingConfig(BaseModel):
-    """日志配置"""
 
     # 日志级别
     level: str = "INFO"
@@ -197,10 +219,17 @@ class DistributionConfig(BaseModel):
     enabled: bool = False
 
     # Broker URL (e.g., redis://localhost:6379/0)
+    # v3.3: 如果使用 Redis，建议在 URL 中包含密码: redis://:password@localhost:6379/0
     broker_url: str = "redis://localhost:6379/0"
 
     # Result Backend URL
     result_backend: str = "redis://localhost:6379/0"
+
+    # v3.3: Redis 密码 (推荐通过 URL 设置，或使用此字段)
+    redis_password: Optional[str] = None
+
+    # v3.3: 是否强制要求 Redis 认证
+    require_auth: bool = False
 
     # 任务超时 (秒)
     task_timeout: int = Field(default=3600, ge=60)
@@ -212,6 +241,12 @@ class DistributionConfig(BaseModel):
         """验证分布式配置连通性"""
         if not self.enabled:
             return True
+
+        # v3.3: 检查 Redis 认证
+        if self.require_auth:
+            if not self._has_redis_password():
+                raise SecurityError("Redis 认证已启用，但未配置密码")
+
         try:
             import redis
             r = redis.from_url(self.broker_url, socket_timeout=2)
@@ -223,6 +258,20 @@ class DistributionConfig(BaseModel):
         except Exception as e:
             logger.debug(f"Redis 连接验证失败: {e}")
             return False
+
+    def _has_redis_password(self) -> bool:
+        """检查是否配置了 Redis 密码"""
+        # 1. 检查显式配置的密码
+        if self.redis_password:
+            return True
+
+        # 2. 检查 broker_url 中是否包含密码
+        # 格式: redis://:password@host:port/db
+        parsed = urlparse(self.broker_url)
+        if parsed.password:
+            return True
+
+        return False
 
 
 class SuperAgentConfig(BaseModel):
@@ -384,3 +433,187 @@ def setup_logging(config: LoggingConfig) -> None:
         file_handler = logging.FileHandler(config.file_path, encoding='utf-8')
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
+
+
+def load_config_from_env() -> Dict[str, Any]:
+    """从环境变量加载配置覆盖值
+
+    Returns:
+        Dict[str, Any]: 配置覆盖字典 (仅包含设置的 env vars)
+    """
+    overrides: Dict[str, Any] = {}
+
+    for env_key, (section, field) in ENV_CONFIG_MAPPING.items():
+        value = os.environ.get(env_key)
+        if value is None:
+            continue
+
+        # 处理布尔值
+        if value.lower() in ("true", "false", "1", "0"):
+            value = value.lower() in ("true", "1")
+
+        # 处理整数值
+        int_fields = {
+            ("distribution", "worker_concurrency"),
+            ("memory", "retention_days"),
+            ("orchestration", "max_parallel_tasks"),
+        }
+        if (section, field) in int_fields:
+            try:
+                value = int(value)
+            except ValueError:
+                # v3.3 安全增强：转换失败时记录错误并使用默认值
+                logger.error(f"环境变量 {env_key} 值 '{value}' 无效，无法转换为整数，跳过此配置")
+                continue
+
+        if section == "experience_level":
+            overrides["experience_level"] = value
+        else:
+            if section not in overrides:
+                overrides[section] = {}
+            overrides[section][field] = value
+
+    return overrides
+
+
+def load_config(
+    config_path: Optional[Path] = None,
+    project_root: Optional[Path] = None,
+    allow_env_overrides: bool = True
+) -> SuperAgentConfig:
+    """加载配置
+
+    v3.3: 支持从环境变量覆盖配置
+
+    Args:
+        config_path: 配置文件路径,如果为 None 则使用默认路径
+        project_root: 项目根目录
+        allow_env_overrides: 是否允许环境变量覆盖配置文件
+
+    Returns:
+        SuperAgentConfig: 配置对象
+    """
+    # v3.3: 如果允许环境变量覆盖，合并到配置中
+    env_overrides = {}
+    if allow_env_overrides:
+        env_overrides = load_config_from_env()
+        if env_overrides:
+            logger.info(f"从环境变量加载配置覆盖: {list(env_overrides.keys())}")
+
+    # 确定配置文件路径
+    if config_path is None:
+        config_path = get_default_config_path(project_root)
+
+    # 如果配置文件不存在,返回默认配置
+    if not config_path.exists():
+        config = SuperAgentConfig(project_root=project_root or Path.cwd())
+        # 应用环境变量覆盖
+        if env_overrides:
+            _apply_overrides(config, env_overrides)
+        logger.info(f"配置文件不存在: {config_path}, 使用默认配置(包含环境变量覆盖)")
+        return config
+
+    # 读取配置文件
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        # v3.3: 合并环境变量覆盖
+        if env_overrides:
+            _apply_overrides_to_dict(data, env_overrides)
+
+        logger.info(f"已加载配置: {config_path}")
+        return SuperAgentConfig.from_dict(data)
+
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        logger.error(f"加载配置失败 (解析错误): {e}, 使用默认配置")
+        return SuperAgentConfig(project_root=project_root or Path.cwd())
+    except (OSError, IOError) as e:
+        logger.error(f"加载配置失败 (IO错误): {e}, 使用默认配置")
+        return SuperAgentConfig(project_root=project_root or Path.cwd())
+    except Exception as e:
+        logger.error(f"加载配置遇到非预期错误: {e}, 使用默认配置")
+        return SuperAgentConfig(project_root=project_root or Path.cwd())
+
+
+def save_config(config: SuperAgentConfig, config_path: Optional[Path] = None) -> None:
+    """保存配置到文件
+
+    Args:
+        config: 配置对象
+        config_path: 配置文件路径,如果为 None 则使用默认路径
+    """
+    if config_path is None:
+        config_path = get_default_config_path(config.project_root)
+
+    # 确保目录存在
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config.model_dump(), f, ensure_ascii=False, indent=2)
+        logger.info(f"配置已保存到: {config_path}")
+    except Exception as e:
+        logger.error(f"保存配置失败: {e}")
+        raise
+
+
+def _apply_overrides(config: SuperAgentConfig, overrides: Dict[str, Any]) -> None:
+    """应用环境变量覆盖到配置对象 (v3.3 安全增强)
+
+    使用深拷贝避免修改原始配置，只更新允许的字段。
+    """
+    import copy
+    for section, fields in overrides.items():
+        if section == "experience_level":
+            config.experience_level = fields
+            continue
+
+        if not hasattr(config, section):
+            continue
+
+        section_obj = getattr(config, section)
+        if hasattr(section_obj, "model_dump"):
+            # v3.3 安全增强：使用深拷贝避免修改原始配置
+            section_dict = copy.deepcopy(section_obj.model_dump())
+            # v3.3 安全增强：只更新允许的字段（交集）
+            allowed_fields = set(section_dict.keys()) & set(fields.keys())
+            for field_name in allowed_fields:
+                section_dict[field_name] = fields[field_name]
+            new_section = type(section_obj)(**section_dict)
+            setattr(config, section, new_section)
+
+
+def _apply_overrides_to_dict(data: Dict[str, Any], overrides: Dict[str, Any]) -> None:
+    """应用环境变量覆盖到配置字典"""
+    for section, fields in overrides.items():
+        if section == "experience_level":
+            data["experience_level"] = fields
+            continue
+
+        if section not in data:
+            data[section] = {}
+        data[section].update(fields)
+
+
+def get_env_config_summary() -> str:
+    """获取当前环境变量配置摘要
+
+    v3.3 安全增强：使用常量判断敏感字段
+
+    Returns:
+        str: 配置摘要
+    """
+    active_vars = []
+    for env_key, _ in ENV_CONFIG_MAPPING.items():
+        value = os.environ.get(env_key)
+        if value is not None:
+            # v3.3 安全增强：使用常量判断敏感字段
+            if any(sensitive in env_key for sensitive in _SENSITIVE_ENV_KEYS):
+                value = "***"
+            active_vars.append(f"{env_key}={value}")
+
+    if not active_vars:
+        return "无活动的环境变量配置"
+
+    return "活动的环境变量配置:\n  " + "\n  ".join(active_vars)

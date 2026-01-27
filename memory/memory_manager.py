@@ -7,6 +7,7 @@
 """
 
 import asyncio
+import threading  # v3.3 优化：使用线程锁保护单例
 import logging
 import time
 from datetime import datetime
@@ -18,6 +19,7 @@ import uuid
 import aiofiles
 from common.monitoring import MetricsManager
 from common.exceptions import MemorySystemError
+from config.constants import Defaults  # P2: 使用常量替代魔法数字
 
 logger = logging.getLogger(__name__)
 
@@ -51,15 +53,17 @@ class MemoryEntry:
 
 
 class MemoryManager:
-    """记忆管理器 - 实现3层记忆系统 (单例异步版)"""
+    """记忆管理器 - 实现3层记忆系统 (单例异步版 v3.4 优化)"""
 
     _instance: Optional['MemoryManager'] = None
-    _lock = asyncio.Lock()
+    _class_lock = threading.Lock()  # 线程锁保护单例创建
 
     def __new__(cls, *args, **kwargs) -> 'MemoryManager':
-        if not cls._instance:
-            cls._instance = super(MemoryManager, cls).__new__(cls)
-        return cls._instance
+        # 使用锁保护单例创建
+        with cls._class_lock:
+            if not cls._instance:
+                cls._instance = super(MemoryManager, cls).__new__(cls)
+            return cls._instance
 
     def __init__(self, project_root: Optional[Path] = None) -> None:
         """初始化记忆管理器
@@ -67,8 +71,11 @@ class MemoryManager:
         Args:
             project_root: 项目根目录
         """
-        # 确保只初始化一次
-        if hasattr(self, 'initialized') and self.initialized:
+        # 防止重复初始化
+        if getattr(self, '_initialized', False):
+            # 如果已经初始化但 project_root 不同，只更新路径
+            if project_root is not None and self.project_root != Path(project_root):
+                self.project_root = Path(project_root)
             return
 
         self.project_root = project_root or Path.cwd()
@@ -88,6 +95,7 @@ class MemoryManager:
         # 锁
         self._lock = asyncio.Lock()  # 内存状态锁
         self._io_lock = asyncio.Lock()  # 文件写入锁 (防止并发写入同一文件)
+        self._cache_lock = threading.Lock()  # 缓存操作锁（使用线程锁，因为方法是同步的）
 
         # 创建目录结构
         self._init_directories()
@@ -95,8 +103,9 @@ class MemoryManager:
         # 加载索引
         self.index: Dict[str, Any] = self._load_index_sync()
 
-        # 初始化查询缓存 (memory_id -> (entry_dict, timestamp))
-        self._cache: Dict[str, Dict[str, tuple[Dict[str, Any], float]]] = {
+        # 初始化查询缓存 (使用 LRU + LFU 混合策略)
+        # 缓存结构: {type: {memory_id: (entry_dict, access_count, last_access_time)}}
+        self._cache: Dict[str, Dict[str, tuple[Dict[str, Any], int, float]]] = {
             "episodic": {},
             "semantic": {},
             "procedural": {}
@@ -106,52 +115,111 @@ class MemoryManager:
             "semantic": {},
             "procedural": {}
         }
-        self._cache_ttl = 300  # 5分钟缓存
-        self._max_cache_size = 1000  # 每个类型的最大缓存条目数
+        self._cache_ttl = Defaults.CACHE_TTL.value  # 使用常量
+        self._max_cache_size = Defaults.MAX_CACHE_SIZE.value  # 使用常量
         self._continuity_cache: Optional[str] = None  # CONTINUITY.md 内容缓存
         self._last_flush_time: float = 0.0
 
-        self.initialized = True
+        # 标记初始化完成
+        self._initialized = True
+        self._index_building = False
+        self._index_task = None
+        self._index_ready = asyncio.Event()  # P0 Fix: 初始化索引就绪事件
+        self._index_ready.set()  # 初始状态下索引已完成
+
         logger.info(f"记忆管理器初始化完成: {self.memory_dir}")
 
-        # 异步构建类别索引 (不阻塞初始化)
-        asyncio.create_task(self._build_category_index())
+    @classmethod
+    def get_instance(cls, project_root: Optional[Path] = None) -> 'MemoryManager':
+        """获取单例，支持延迟初始化
+
+        Args:
+            project_root: 项目根目录（仅在首次创建时有效）
+
+        Returns:
+            MemoryManager 单例
+        """
+        if not cls._instance:
+            with cls._class_lock:
+                if not cls._instance:
+                    instance = cls(project_root)
+                    cls._instance = instance
+        return cls._instance
+
+    async def initialize_async(self, project_root: Optional[Path] = None) -> None:
+        """异步初始化（可选，用于需要异步初始化的场景）
+
+        P0 Fix: 使用异步锁避免线程/异步锁混用导致的死锁
+        Args:
+            project_root: 项目根目录
+        """
+        async with self._lock:
+            if not self._index_building:
+                self._index_building = True
+                self._index_task = asyncio.create_task(self._build_category_index())
+
+    async def wait_for_index(self, timeout: float = 30.0) -> bool:
+        """等待类别索引构建完成
+
+        Args:
+            timeout: 超时时间（秒）
+
+        Returns:
+            是否在超时前完成
+        """
+        if not self._index_building:
+            return True  # 已经完成
+
+        if self._index_task is None:
+            return True
+
+        try:
+            await asyncio.wait_for(self._index_task, timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            logger.warning("等待类别索引构建超时")
+            return False
 
     async def _build_category_index(self) -> None:
-        """异步构建类别索引 (优化版：IO不在锁内)"""
-        for mtype in ["semantic", "procedural"]:
-            # 1. 先在不占锁的情况下收集所有 ID
-            async with self._lock:
-                mids = list(self.index.get(mtype, []))
+        """异步构建类别索引 (v3.3 优化版：IO不在锁内 + 完成通知)"""
+        try:
+            for mtype in ["semantic", "procedural"]:
+                # 1. 先在不占锁的情况下收集所有 ID
+                async with self._lock:
+                    mids = list(self.index.get(mtype, []))
 
-            for mid in mids:
-                try:
-                    folder = (self.semantic_dir if mtype == "semantic"
-                              else self.procedural_dir)
-                    file_path = folder / f"{mid}.json"
+                for mid in mids:
+                    try:
+                        folder = (self.semantic_dir if mtype == "semantic"
+                                  else self.procedural_dir)
+                        file_path = folder / f"{mid}.json"
 
-                    if file_path.exists():
-                        # 2. 读取文件 (IO)
-                        async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
-                            content = await f.read()
-                            memory_data = json.loads(content)
-                            category = memory_data.get("metadata", {}).get(
-                                "category", "general"
-                            )
+                        if file_path.exists():
+                            # 2. 读取文件 (IO)
+                            async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
+                                content = await f.read()
+                                memory_data = json.loads(content)
+                                category = memory_data.get("metadata", {}).get(
+                                    "category", "general"
+                                )
 
-                            # 3. 更新内存中的索引 (占锁)
-                            async with self._lock:
-                                if category not in self._category_index[mtype]:
-                                    self._category_index[mtype][category] = []
-                                if mid not in self._category_index[mtype][category]:
-                                    self._category_index[mtype][category].append(mid)
-                except (FileNotFoundError, json.JSONDecodeError, PermissionError) as e:
-                    logger.error(f"构建类别索引失败 - 文件损坏或丢失 ({mid}): {e}")
-                except (OSError, IOError) as e:
-                    logger.error(f"构建类别索引失败 - IO错误 ({mid}): {e}")
-                except Exception as e:
-                    logger.error(f"构建类别索引失败 - 未知错误 ({type(e).__name__}) ({mid}): {e}")
-        logger.info("类别索引构建完成")
+                                # 3. 更新内存中的索引 (占锁)
+                                async with self._lock:
+                                    if category not in self._category_index[mtype]:
+                                        self._category_index[mtype][category] = []
+                                    if mid not in self._category_index[mtype][category]:
+                                        self._category_index[mtype][category].append(mid)
+                    except (FileNotFoundError, json.JSONDecodeError, PermissionError) as e:
+                        logger.error(f"构建类别索引失败 - 文件损坏或丢失 ({mid}): {e}")
+                    except (OSError, IOError) as e:
+                        logger.error(f"构建类别索引失败 - IO错误 ({mid}): {e}")
+                    except Exception as e:
+                        logger.error(f"构建类别索引失败 - 未知错误 ({type(e).__name__}) ({mid}): {e}")
+        finally:
+            # v3.3: 通知索引构建完成
+            self._index_building = False
+            self._index_ready.set()
+            logger.info("类别索引构建完成")
 
     def _init_directories(self) -> None:
         """初始化目录结构"""
@@ -226,45 +294,75 @@ class MemoryManager:
             return default_index
 
     def _get_from_cache(self, memory_type: str, memory_id: str) -> Optional[Dict[str, Any]]:
-        """从缓存获取记忆条目"""
+        """从缓存获取记忆条目 (v3.3 LRU + LFU 混合策略)
+
+        Args:
+            memory_type: 记忆类型
+            memory_id: 记忆 ID
+
+        Returns:
+            缓存的条目或 None
+        """
         if memory_type not in self._cache:
             return None
 
-        cached_entry_data = self._cache[memory_type].get(memory_id)
-        if not cached_entry_data:
-            return None
+        # v3.3 优化：使用线程锁保护，确保原子性
+        with self._cache_lock:
+            cached_entry_data = self._cache[memory_type].get(memory_id)
+            if not cached_entry_data:
+                return None
 
-        entry, timestamp = cached_entry_data
-        if time.time() - timestamp > self._cache_ttl:
-            del self._cache[memory_type][memory_id]
-            return None
+            entry, access_count, timestamp = cached_entry_data
+            if time.time() - timestamp > self._cache_ttl:
+                del self._cache[memory_type][memory_id]
+                return None
 
-        return entry
+            # 访问时更新 LFU 计数和 LRU 时间戳 (原子操作)
+            self._cache[memory_type][memory_id] = (entry, access_count + 1, time.time())
+            return entry
 
     def _save_to_cache(self, memory_type: str, memory_id: str, entry: Dict[str, Any]) -> None:
-        """保存记忆条目到缓存 (增加容量限制)"""
-        if memory_type in self._cache:
-            # 如果达到最大容量，删除最早的一个 (简单淘汰策略)
-            if len(self._cache[memory_type]) >= self._max_cache_size:
-                # 找到最早的时间戳
-                oldest_id = min(
-                    self._cache[memory_type].keys(),
-                    key=lambda k: self._cache[memory_type][k][1]
-                )
-                del self._cache[memory_type][oldest_id]
+        """保存记忆条目到缓存 (v3.3 LRU + LFU 混合淘汰策略)"""
+        if memory_type not in self._cache:
+            return
 
-            self._cache[memory_type][memory_id] = (entry, time.time())
+        # v3.3 优化：使用线程锁保护
+        with self._cache_lock:
+            # 当缓存满时，使用 LFU + LRU 混合策略淘汰
+            # 优先淘汰访问频率低的条目，频率相同时淘汰最久未访问的
+            if len(self._cache[memory_type]) >= self._max_cache_size:
+                candidates = []
+                for mid, (_entry, count, ts) in self._cache[memory_type].items():
+                    candidates.append((mid, count, ts))
+
+                # 找出访问频率最低的条目（保留至少访问过一次的）
+                min_count = min(c[1] for c in candidates) if candidates else 0
+                low_freq_items = [c for c in candidates if c[1] == min_count]
+
+                # 从低频条目中找出最久未访问的
+                oldest = min(low_freq_items, key=lambda c: c[2])
+                del self._cache[memory_type][oldest[0]]
+                logger.debug(f"缓存淘汰: {oldest[0]} (访问次数: {oldest[1]})")
+
+            # 保存新条目 (access_count=0 表示刚添加)
+            self._cache[memory_type][memory_id] = (entry, 0, time.time())
 
     def _clean_expired_cache(self) -> None:
-        """清理过期缓存"""
+        """清理过期缓存 (v3.3 优化)"""
         now = time.time()
+        cleaned = 0
         for memory_type in self._cache:
-            expired_keys = [
-                k for k, (v, t) in self._cache[memory_type].items()
-                if now - t > self._cache_ttl
-            ]
-            for k in expired_keys:
-                del self._cache[memory_type][k]
+            with self._cache_lock:
+                expired_keys = [
+                    k for k, (_entry, _count, t) in self._cache[memory_type].items()
+                    if now - t > self._cache_ttl
+                ]
+                for k in expired_keys:
+                    del self._cache[memory_type][k]
+                    cleaned += 1
+
+        if cleaned > 0:
+            logger.debug(f"清理过期缓存: {cleaned} 个条目")
 
     async def _save_index(self) -> None:
         """异步保存记忆索引 (带 IO 锁保护)"""
@@ -709,21 +807,33 @@ class MemoryManager:
     # ========== 统计信息 ==========
 
     def get_statistics(self) -> Dict[str, Any]:
-        """获取记忆统计信息 (线程安全优化)"""
-        # 注意：这里不使用 await self._lock，因为它是同步方法
-        # 在 Python 中读取字典通常是安全的，但我们取快照
+        """获取记忆统计信息 (v3.3 优化：包含缓存命中率)"""
         idx = self.index
+
+        # v3.3 计算缓存命中率
+        total_access = sum(
+            sum(entry[1] for entry in cache.values()) + len(cache)
+            for cache in self._cache.values()
+        )
+        cache_hits = sum(
+            sum(entry[1] for entry in cache.values())
+            for cache in self._cache.values()
+        )
+        cache_hit_rate = (cache_hits / total_access * 100) if total_access > 0 else 0
+
         return {
             "total_memories": idx.get("total_count", 0),
             "episodic_count": len(idx.get("episodic", [])),
             "semantic_count": len(idx.get("semantic", [])),
             "procedural_count": len(idx.get("procedural", [])),
             "memory_dir": str(self.memory_dir),
-            "cache_size": {t: len(c) for t, c in self._cache.items()}
+            "cache_size": {t: len(c) for t, c in self._cache.items()},
+            "cache_hit_rate": round(cache_hit_rate, 2),
+            "index_ready": not self._index_building
         }
 
     def clear_cache(self) -> None:
-        """清除所有查询缓存"""
+        """清除所有查询缓存 (v3.3)"""
         for cache_type in self._cache:
             self._cache[cache_type].clear()
         logger.info("记忆查询缓存已清除")

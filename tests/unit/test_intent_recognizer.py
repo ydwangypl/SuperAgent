@@ -49,11 +49,14 @@ class TestIntentRecognizer(unittest.IsolatedAsyncioTestCase):
         """测试混合意图"""
         user_input = "开发一个全栈应用，前端用Vue，后端用Node.js，部署到Docker"
         result = await self.recognizer.recognize(user_input)
-        
+
         # 全栈意图应该被识别
         self.assertIn(AgentType.FULL_STACK_DEV, result.agent_types)
-        # DevOps意图也应该被识别
-        self.assertIn(AgentType.DEVOPS_ENGINEERING, result.agent_types)
+        # DevOps意图也应该被识别 (v3.3: 支持 DEVOPS 或 DEVOPS_ENGINEERING)
+        self.assertTrue(
+            AgentType.DEVOPS in result.agent_types or AgentType.DEVOPS_ENGINEERING in result.agent_types,
+            f"期望 DevOps 意图, 实际: {result.agent_types}"
+        )
 
     async def test_sanitize_input_integration(self):
         """测试输入清理集成"""

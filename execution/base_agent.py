@@ -12,7 +12,7 @@ import json
 import aiofiles
 from datetime import datetime
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional, Set
+from typing import List, Dict, Any, Optional, Set, TYPE_CHECKING
 from pathlib import Path
 
 from .models import (
@@ -25,6 +25,14 @@ from .models import (
     AgentThought
 )
 from common.security import sanitize_input, check_sensitive_data
+
+# 动态导入 SmartContextCompressor (避免循环依赖)
+try:
+    from context.smart_compressor import SmartContextCompressor
+    COMPRESSOR_AVAILABLE = True
+except ImportError:
+    COMPRESSOR_AVAILABLE = False
+    SmartContextCompressor = None
 
 # TDD Validator 动态导入 (DRY 优化)
 try:
@@ -41,6 +49,22 @@ try:
 except ImportError:
     DEBUGGER_AVAILABLE = False
     SystematicDebugger = None
+
+# v3.3: FindingsManager 动态导入 (Planning Files 模块)
+try:
+    from extensions.planning_files import FindingsManager
+    FINDINGS_AVAILABLE = True
+except ImportError:
+    FINDINGS_AVAILABLE = False
+    FindingsManager = None  # type: ignore
+
+# v3.3: ProgressManager 动态导入 (Planning Files 模块)
+try:
+    from extensions.planning_files import ProgressManager
+    PROGRESS_AVAILABLE = True
+except ImportError:
+    PROGRESS_AVAILABLE = False
+    ProgressManager = None  # type: ignore
 
 
 logger = logging.getLogger(__name__)
@@ -77,7 +101,11 @@ class BaseAgent(ABC):
         # 核心组件初始化 (DRY 优化)
         self.tdd_validator: Optional[TDDValidator] = None
         self.debugger: Optional[SystematicDebugger] = None
-        
+
+        # v3.3: Planning Files 组件 (Findings & Progress)
+        self.findings_manager: Any = None
+        self.progress_manager: Any = None
+
         logger.info(f"Agent {self.agent_id} 初始化完成")
 
     def setup_tdd(self, enabled: bool = True, strict_mode: bool = False):
@@ -95,6 +123,91 @@ class BaseAgent(ABC):
             logger.info(f"Agent {self.agent_id}: SystematicDebugger 已启用")
         else:
             self.debugger = None
+
+    def setup_findings_manager(self, project_root: Path, memory_manager = None):
+        """设置 FindingsManager (v3.3)
+
+        用于将研究发现写入 findings.md 并与 MemoryManager 联动
+        """
+        if FINDINGS_AVAILABLE:
+            self.findings_manager = FindingsManager(
+                project_root=project_root,
+                findings_file=project_root / "docs" / "findings.md",
+                memory_manager=memory_manager
+            )
+            logger.info(f"Agent {self.agent_id}: FindingsManager 已启用")
+        else:
+            self.findings_manager = None
+
+    def setup_progress_manager(self, project_root: Path, session_id: str = None):
+        """设置 ProgressManager (v3.3)
+
+        用于记录会话进度到 progress.md
+        """
+        if PROGRESS_AVAILABLE:
+            self.progress_manager = ProgressManager(
+                project_root=project_root,
+                progress_file=project_root / "docs" / "progress.md",
+                session_id=session_id
+            )
+            logger.info(f"Agent {self.agent_id}: ProgressManager 已启用")
+        else:
+            self.progress_manager = None
+
+    async def write_finding(
+        self,
+        content: str,
+        category: str = "general",
+        impact: str = "",
+        source: str = ""
+    ) -> Optional[str]:
+        """记录研究发现 (v3.3)
+
+        将研究发现写入 findings.md 并同步到 MemoryManager
+
+        Args:
+            content: 发现内容
+            category: 分类 (architecture, implementation, testing, etc.)
+            impact: 影响范围
+            source: 来源
+
+        Returns:
+            finding_id 或 None (如果失败)
+        """
+        if self.findings_manager:
+            try:
+                return await self.findings_manager.add_finding(
+                    content=content,
+                    category=category,
+                    impact=impact,
+                    source=source or self.agent_id
+                )
+            except Exception as e:
+                logger.error(f"记录研究发现失败: {e}")
+        return None
+
+    async def log_progress(
+        self,
+        action: str,
+        status: str,
+        details: str = ""
+    ) -> None:
+        """记录进度到 progress.md (v3.3)
+
+        Args:
+            action: 操作名称
+            status: 状态 (started, completed, failed, etc.)
+            details: 详细信息
+        """
+        if self.progress_manager:
+            try:
+                await self.progress_manager.log_progress(
+                    action=action,
+                    status=status,
+                    details=details
+                )
+            except Exception as e:
+                logger.error(f"记录进度失败: {e}")
 
     @classmethod
     @abstractmethod
@@ -125,6 +238,35 @@ class BaseAgent(ABC):
         """
         pass
 
+    def _optimize_context(self, context: AgentContext) -> AgentContext:
+        """优化执行上下文，减少 Token 消耗"""
+        if not COMPRESSOR_AVAILABLE:
+            return context
+
+        try:
+            # 智能截断过长的任务描述和之前的结果
+            # 获取当前 Agent 类型 (从 class name 或 type 属性)
+            agent_type_str = self.__class__.__name__.lower().replace("agent", "")
+            
+            # 使用 SmartContextCompressor 进行压缩
+            # 这里的规则可以根据 Agent 类型定制
+            if len(context.description) > 1000 or (context.previous_results and len(str(context.previous_results)) > 2000):
+                self.add_log(f"检测到上下文过大，正在进行智能 Token 优化...")
+                
+                # 任务描述压缩
+                if len(context.description) > 1000:
+                    context.description = SmartContextCompressor.compress_semantic(context.description)
+                
+                # 历史结果压缩 (如果是 List[AgentResult])
+                if context.previous_results and len(context.previous_results) > 3:
+                    # 仅保留最近 3 个结果的关键信息
+                    context.previous_results = context.previous_results[-3:]
+            
+            return context
+        except Exception as e:
+            logger.warning(f"上下文优化失败: {e}")
+            return context
+
     async def execute(
         self,
         context: AgentContext,
@@ -144,12 +286,22 @@ class BaseAgent(ABC):
         self._current_metrics = {}  # 重置指标
         self.clear_thoughts()  # 重置思考过程
         self.steps = []  # 重置步骤
+
+        # 1. 优化上下文 (Token 优化)
+        context = self._optimize_context(context)
         
         result = AgentResult(
             agent_id=self.agent_id,
             task_id=context.task_id,
             step_id=context.step_id,
             status=AgentStatus.WORKING
+        )
+
+        # v3.3: 记录任务开始进度
+        await self.log_progress(
+            action=f"任务开始: {context.task_id}",
+            status="started",
+            details=f"Agent: {self.name}"
         )
 
         self.add_log(f"开始执行任务: {context.task_id} ({self.name})")
@@ -193,6 +345,14 @@ class BaseAgent(ABC):
             result.error = error_msg
             result.message = f"任务执行失败 (系统异常): {str(e)}"
         finally:
+            # v3.3: 记录任务结束进度
+            status = "completed" if result.status == AgentStatus.COMPLETED else "failed"
+            await self.log_progress(
+                action=f"任务结束: {context.task_id}",
+                status=status,
+                details=result.message or ""
+            )
+
             if result.status != AgentStatus.COMPLETED:
                 self.status = AgentStatus.FAILED
             else:

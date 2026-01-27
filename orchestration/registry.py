@@ -7,14 +7,10 @@ Agent 注册中心 (Phase 3 重构核心)
 """
 
 import logging
-from typing import Dict, Type, List, Optional
+from typing import Dict, Type, List, Optional, Union
 from dataclasses import dataclass, field
 from common.models import AgentType
 from execution.base_agent import BaseAgent
-from execution.coding_agent import CodingAgent
-from execution.testing_agent import TestingAgent
-from execution.documentation_agent import DocumentationAgent
-from execution.refactoring_agent import RefactoringAgent
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +19,7 @@ logger = logging.getLogger(__name__)
 class AgentMetadata:
     """Agent 元数据定义"""
     agent_type: AgentType
-    impl_class: Type[BaseAgent]
+    impl_class: Union[Type[BaseAgent], str]  # 支持直接引用或导入路径(用于延迟加载)
     description: str
     priority: int = 99
     max_concurrent: int = 5
@@ -47,12 +43,12 @@ class AgentRegistry:
         agents = [
             # 核心管理与设计
             AgentMetadata(
-                AgentType.PRODUCT_MANAGEMENT, CodingAgent,
+                AgentType.PRODUCT_MANAGEMENT, "execution.coding_agent.CodingAgent",
                 "负责产品需求分析、功能规划和 PRD 编写 (支持 RICE/MoSCoW 框架)", 1, 3,
                 keywords=[r"需求|规划|prd|分析|产品|management|design"]
             ),
             AgentMetadata(
-                AgentType.DATABASE_DESIGN, CodingAgent,
+                AgentType.DATABASE_DESIGN, "execution.coding_agent.CodingAgent",
                 "负责数据库 Schema 设计、索引优化 and 数据建模", 2, 5,
                 keywords=[
                     r"数据库|database|schema|table|索引|migration",
@@ -61,14 +57,14 @@ class AgentRegistry:
                 ]
             ),
             AgentMetadata(
-                AgentType.API_DESIGN, CodingAgent,
+                AgentType.API_DESIGN, "execution.coding_agent.CodingAgent",
                 "负责 RESTful/GraphQL API 接口定义 and Swagger 文档生成", 2, 5,
                 keywords=[r"api|接口|restful|graphql|swagger|endpoint|路由"]
             ),
 
             # 核心开发 (映射到 CodingAgent)
             AgentMetadata(
-                AgentType.BACKEND_DEV, CodingAgent,
+                AgentType.BACKEND_DEV, "execution.coding_agent.CodingAgent",
                 "负责服务端业务逻辑、数据处理 and 系统集成", 3, 10,
                 keywords=[
                     r"后端|backend|服务端|server|后台",
@@ -77,7 +73,7 @@ class AgentRegistry:
                 ]
             ),
             AgentMetadata(
-                AgentType.FRONTEND_DEV, CodingAgent,
+                AgentType.FRONTEND_DEV, "execution.coding_agent.CodingAgent",
                 "负责 UI 组件开发、交互逻辑 and 前端架构", 3, 10,
                 keywords=[
                     r"前端|frontend|界面|ui|页面",
@@ -86,7 +82,7 @@ class AgentRegistry:
                 ]
             ),
             AgentMetadata(
-                AgentType.FULL_STACK_DEV, CodingAgent,
+                AgentType.FULL_STACK_DEV, "execution.coding_agent.CodingAgent",
                 "负责端到端的完整功能实现", 3, 8,
                 keywords=[
                     r"全栈|fullstack|前后端",
@@ -94,77 +90,51 @@ class AgentRegistry:
                 ]
             ),
             AgentMetadata(
-                AgentType.MINI_PROGRAM_DEV, CodingAgent,
+                AgentType.MINI_PROGRAM_DEV, "execution.coding_agent.CodingAgent",
                 "负责小程序/移动端专用逻辑开发", 4, 5,
                 keywords=[r"小程序|微信小程序|uniapp|移动端|mobile"]
             ),
 
-            # 质量与安全
+            # 质量保证与运维
             AgentMetadata(
-                AgentType.QA_ENGINEERING, TestingAgent,
-                "负责单元测试、集成测试生成 and 自动化测试流程", 5, 10,
-                keywords=[
-                    r"测试|test|单元测试|集成测试",
-                    r"pytest|jest|测试用例|覆盖率",
-                    r"质量保证|qa"
-                ]
+                AgentType.TESTING, "execution.testing_agent.TestingAgent",
+                "负责单元测试、集成测试、自动化测试脚本编写 and 漏洞扫描", 2, 5,
+                keywords=[r"测试|test|junit|pytest|jest|cypress|selenium|coverage|单元测试|自动化测试"]
             ),
             AgentMetadata(
-                AgentType.SECURITY_AUDIT, CodingAgent,
-                "负责代码安全扫描、漏洞识别 and 安全加固建议", 6, 3,
-                keywords=[r"安全|扫描|漏洞|audit|security|加固|注入|xss"]
+                AgentType.CODE_REVIEW, "execution.coding_agent.CodingAgent",
+                "负责代码质量审查、安全漏洞检查 and 性能优化建议", 2, 5,
+                keywords=[r"review|审查|审计|代码评审|质量|优化|代码规范"]
             ),
             AgentMetadata(
-                AgentType.CODE_REVIEW, CodingAgent,
-                "负责自动化代码质量检查 and 风格一致性评审", 6, 5,
-                keywords=[r"审查|评审|review|规范|质量|风格|lint"]
+                AgentType.DEVOPS, "execution.coding_agent.CodingAgent",
+                "负责 CI/CD 流水线配置、Docker 容器化 and 云原生部署 (K8s)", 4, 3,
+                keywords=[r"devops|docker|k8s|kubernetes|jenkins|cicd|部署|pipeline|容器"]
             ),
 
-            # 运维与优化
+            # 辅助类
             AgentMetadata(
-                AgentType.DEVOPS_ENGINEERING, CodingAgent,
-                "负责 CI/CD 流水线配置、容器化 and 部署脚本生成", 7, 5,
-                keywords=[
-                    r"部署|deploy|ci|cd|docker|k8s",
-                    r"运维|监控|日志|管道",
-                    r"自动化|构建|发布"
-                ]
+                AgentType.DOCUMENTATION, "execution.documentation_agent.DocumentationAgent",
+                "负责项目文档维护、API 文档生成 and 用户手册编写", 5, 2,
+                keywords=[r"文档|doc|readme|manual|用户手册|注释|wiki"]
             ),
             AgentMetadata(
-                AgentType.PERFORMANCE_OPTIMIZATION, CodingAgent,
-                "负责系统瓶颈分析 and 代码/SQL 性能调优建议", 7, 3,
-                keywords=[r"性能|优化|调优|瓶颈|performance|吞吐量|并发"]
-            ),
-            AgentMetadata(
-                AgentType.INFRA_SETUP, CodingAgent,
-                "负责基础设施即代码 (IaC) and 云资源初始化配置", 7, 3,
-                keywords=[r"基础设施|iac|terraform|cloud|云资源|初始化"]
+                AgentType.REFACTORING, "execution.refactoring_agent.RefactoringAgent",
+                "负责遗留代码重构、架构升级 and 技术债清理", 3, 3,
+                keywords=[r"重构|refactor|清理|解耦|架构升级|技术债"]
             ),
 
-            # 专项处理
+            # 自动化
             AgentMetadata(
-                AgentType.TECHNICAL_WRITING, DocumentationAgent,
-                "负责用户手册、技术文档、API 参考 and 架构说明的编写", 8, 5,
-                keywords=[
-                    r"文档|documentation|readme|指南",
-                    r"api文档|使用手册|说明"
-                ]
+                AgentType.N8N_AUTOMATION, "extensions.executors.n8n_executor.N8nExecutor",
+                "负责 n8n 工作流自动化任务，包括工作流生成、模板应用和节点查询", 5, 3,
+                keywords=[r"n8n|workflow|automation|自动化|工作流|webhook"]
             ),
             AgentMetadata(
-                AgentType.CODE_REFACTORING, RefactoringAgent,
-                "负责既有代码的结构优化、模式改进 and 技术债清理", 8, 3,
-                keywords=[r"重构|refactor|解耦|清晰|清理"]
-            ),
-            AgentMetadata(
-                AgentType.DATA_MIGRATION, CodingAgent,
-                "负责数据迁移脚本编写 and ETL 逻辑实现", 8, 3,
-                keywords=[r"迁移|migration|etl|导入|导出|同步"]
-            ),
-            AgentMetadata(
-                AgentType.UI_DESIGN, CodingAgent,
-                "负责界面视觉设计、切图说明 and 样式表生成", 9, 3,
-                keywords=[r"设计|视觉|切图|样式|css|less|sass|figma"]
-            ),
+                AgentType.PROMPT_ARCHITECT, "extensions.executors.prompt_executor.PromptExecutor",
+                "负责提示词优化和结构化，将模糊需求转化为高质量提示词", 5, 3,
+                keywords=[r"提示词|prompt|优化|结构化|写作|文案"]
+            )
         ]
 
         for meta in agents:
@@ -181,9 +151,26 @@ class AgentRegistry:
 
     @classmethod
     def get_impl_class(cls, agent_type: AgentType) -> Optional[Type[BaseAgent]]:
-        """获取 Agent 实现类"""
+        """获取 Agent 实现类 (支持按需动态导入)"""
         meta = cls.get_metadata(agent_type)
-        return meta.impl_class if meta else None
+        if not meta:
+            return None
+
+        if isinstance(meta.impl_class, str):
+            # 动态导入类
+            try:
+                import importlib
+                module_path, class_name = meta.impl_class.rsplit(".", 1)
+                module = importlib.import_module(module_path)
+                cls_obj = getattr(module, class_name)
+                # 缓存回 metadata 以避免重复导入
+                meta.impl_class = cls_obj
+                return cls_obj
+            except (ImportError, AttributeError) as e:
+                logger.error(f"无法动态加载 Agent 类 {meta.impl_class}: {e}")
+                return None
+
+        return meta.impl_class
 
     @classmethod
     def get_description(cls, agent_type: AgentType) -> str:

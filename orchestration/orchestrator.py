@@ -4,6 +4,15 @@
 编排器(Orchestrator)
 
 SuperAgent的核心协调引擎,负责任务编排、Agent调度、执行管理
+
+v3.3 新增:
+- 生命周期钩子系统集成 (HookManager)
+- TaskPlanManager 集成 (3-File 模式)
+- SessionManager 集成 (状态持久化)
+
+v3.3 P1 改进:
+- OrchestratorBase 抽象基类定义核心接口
+- 关注点分离：执行、协调、调度
 """
 
 import logging
@@ -36,6 +45,8 @@ from .worktree_orchestrator import WorktreeOrchestrator
 from .git_manager import GitAutoCommitManager
 from config.settings import SuperAgentConfig, load_config
 from monitoring.token_monitor import TokenMonitor
+from core.test_runner import TestRunner
+from common.exceptions import ExecutionError, SecurityError
 
 
 logger = logging.getLogger(__name__)
@@ -49,9 +60,26 @@ except ImportError:
     MemoryManager = None
     logger.warning("记忆管理层不可用")
 
+# v3.3: 扩展模块导入 (失败时降级)
+try:
+    from extensions.hooks import HookManager, create_default_hooks
+    from extensions.planning_files import TaskPlanManager, ProgressManager, FindingsManager
+    from extensions.state_persistence import SessionManager, SessionStatus
+    EXTENSIONS_AVAILABLE = True
+except ImportError as e:
+    EXTENSIONS_AVAILABLE = False
+    HookManager = None
+    logger.warning(f"扩展模块不可用: {e}")
+
 
 class Orchestrator(BaseOrchestrator):
-    """SuperAgent编排器 (重构版 - 关注点分离)"""
+    """SuperAgent编排器 (重构版 - 关注点分离)
+
+    v3.3 新增:
+        - 生命周期钩子系统集成 (HookManager)
+        - TaskPlanManager 集成 (3-File 模式)
+        - SessionManager 集成 (状态持久化)
+    """
 
     def __init__(
         self,
@@ -100,9 +128,20 @@ class Orchestrator(BaseOrchestrator):
         if git_config.enabled:
             logger.info("Git 自动提交已启用")
 
+        # 6b. 初始化测试运行器 (方案A: 主工作流测试集成)
+        self.test_runner = TestRunner(self.project_root)
+
         # 7. 初始化 Token 监控器
         self.token_monitor = self._init_token_monitor()
         self.context.token_monitor = self.token_monitor
+
+        # 8. v3.3: 初始化生命周期钩子系统
+        self._hook_manager = None
+        self._task_plan_manager = None
+        self._progress_manager = None
+        self._findings_manager = None
+        self._session_manager = None
+        self._init_extensions()
 
         # 执行状态
         self.state = OrchestrationState(
@@ -110,6 +149,58 @@ class Orchestrator(BaseOrchestrator):
             total_tasks=0
         )
         self.result_handler = ExecutionResultHandler(self.state, self.memory_manager)
+
+    def _init_extensions(self) -> None:
+        """v3.3: 初始化扩展模块 (降级处理)"""
+        if not EXTENSIONS_AVAILABLE:
+            return
+
+        try:
+            # 初始化 TaskPlanManager (task_plan.md)
+            self._task_plan_manager = TaskPlanManager(
+                self.project_root,
+                self.project_root / "task_plan.md",
+                auto_save=True
+            )
+
+            # 初始化 ProgressManager (progress.md)
+            self._progress_manager = ProgressManager(
+                self.project_root,
+                self.project_root / "docs" / "progress.md"
+            )
+
+            # 初始化 FindingsManager (findings.md)
+            self._findings_manager = FindingsManager(
+                self.project_root,
+                self.project_root / "docs" / "findings.md",
+                self.memory_manager  # 与 MemoryManager 联动
+            )
+
+            # 初始化 SessionManager (状态持久化)
+            self._session_manager = SessionManager(self.project_root)
+
+            # 初始化 HookManager
+            self._hook_manager = HookManager(self.memory_manager)
+
+            # 注册默认钩子
+            hooks = create_default_hooks(
+                self._task_plan_manager,
+                self._progress_manager,
+                self.memory_manager
+            )
+            for hook in hooks:
+                if hook:
+                    self._hook_manager.register(hook)
+
+            logger.info("v3.3 扩展模块已初始化 (Hook/Planning/Session)")
+
+        except Exception as e:
+            logger.warning(f"v3.3 扩展模块初始化失败: {e}")
+            self._hook_manager = None
+            self._task_plan_manager = None
+            self._progress_manager = None
+            self._findings_manager = None
+            self._session_manager = None
 
     def _init_executor(self):
         """初始化任务执行器"""
@@ -161,11 +252,31 @@ class Orchestrator(BaseOrchestrator):
 
     @monitor_task_duration(agent_type="orchestrator")
     async def execute_plan(self, plan: ExecutionPlan) -> ProjectExecutionResult:
-        """执行完整的项目计划 (重构版 - 关注点分离)"""
+        """执行完整的项目计划 (重构版 - 关注点分离)
+
+        v3.3 新增: 生命周期钩子集成、会话管理
+        """
         self._initialize_execution_state(plan)
         result = self._create_initial_result()
 
+        # v3.3: 开始会话
+        if self._session_manager:
+            await self._session_manager.start_session(
+                session_id=self.state.project_id,
+                initial_state={"plan_description": plan.description}
+            )
+
         try:
+            # v3.3: 执行 PreExecute 钩子
+            if self._hook_manager:
+                hook_context = await self._hook_manager.execute_pre_execute({
+                    "project_id": self.state.project_id,
+                    "total_tasks": len(plan.steps)
+                })
+                if hook_context.context_injection:
+                    # 将钩子注入的上下文添加到计划描述
+                    result.context_injection = hook_context.context_injection
+
             # 1. 准备阶段 (记忆与任务创建)
             await self._prepare_execution(plan)
 
@@ -180,6 +291,29 @@ class Orchestrator(BaseOrchestrator):
         except Exception as e:
             await self._handle_execution_error(e, plan, result)
         finally:
+            # v3.3: 执行 PostExecute 钩子
+            if self._hook_manager:
+                await self._hook_manager.execute_post_execute(
+                    session_state={"completed_tasks": result.completed_tasks},
+                    execution_history=result.execution_history
+                )
+
+            # v3.3: 执行 Stop 钩子并结束会话
+            if self._hook_manager:
+                stop_result = await self._hook_manager.execute_stop({
+                    "completed": result.completed_tasks,
+                    "failed": result.failed_tasks,
+                    "total": result.total_tasks
+                })
+                if stop_result.context_injection:
+                    result.hook_report = stop_result.context_injection
+
+            if self._session_manager:
+                await self._session_manager.end_session(
+                    status=SessionStatus.COMPLETED,
+                    final_state={"result": "success" if result.success else "partial"}
+                )
+
             self._cleanup_execution(result)
 
         return result
@@ -211,13 +345,45 @@ class Orchestrator(BaseOrchestrator):
         result: ProjectExecutionResult,
         executed_tasks: List[TaskExecution]
     ) -> None:
-        """完成执行后的汇总与审查"""
-        # 代码审查
+        """完成执行后的汇总、审查与测试"""
+        # 1. 代码审查
         result.code_review_summary = await self.review_orchestrator.run_review(
             self.state.project_id, executed_tasks
         )
 
-        # 资源清理
+        # 2. 运行测试 (方案A: 主工作流测试集成)
+        if self.config.testing.enabled:
+            test_config = self.config.testing
+            logger.info("运行测试...")
+
+            test_result = await self.test_runner.run_pytest(
+                test_path=test_config.test_path,
+                verbose=test_config.verbose,
+                coverage=test_config.coverage,
+                markers=test_config.markers
+            )
+
+            result.test_summary = {
+                "success": test_result.success,
+                "total_tests": test_result.total_tests,
+                "passed": test_result.passed,
+                "failed": test_result.failed,
+                "errors": test_result.errors,
+                "duration_seconds": test_result.duration_seconds,
+                "coverage": test_result.coverage
+            }
+
+            # 如果测试失败且配置要求失败则标记为失败
+            if not test_result.success and test_config.fail_on_failure:
+                logger.warning("测试失败,根据配置标记任务为失败")
+
+            logger.info(
+                f"测试完成: 通过={test_result.passed}, "
+                f"失败={test_result.failed}, "
+                f"耗时={test_result.duration_seconds:.2f}s"
+            )
+
+        # 3. 资源清理
         if self.config.worktree.auto_cleanup:
             await self.worktree_orchestrator.cleanup_all()
 
@@ -239,10 +405,23 @@ class Orchestrator(BaseOrchestrator):
         plan: ExecutionPlan,
         result: ProjectExecutionResult
     ) -> None:
-        """统一错误处理逻辑"""
-        logger.error(f"执行计划失败 ({type(e).__name__}): {e}")
+        """统一错误处理逻辑 (v3.3 P1: 使用自定义异常)"""
+        # v3.3: 使用自定义异常类型
+        error_type = type(e).__name__
+        if isinstance(e, ExecutionError):
+            error_type = "执行错误"
+        elif isinstance(e, SecurityError):
+            error_type = "安全错误"
+        elif isinstance(e, ValueError):
+            error_type = "参数错误"
+        elif isinstance(e, IOError):
+            error_type = "IO 错误"
+        elif isinstance(e, TimeoutError):
+            error_type = "超时错误"
+
+        logger.error(f"执行计划失败 ({error_type}): {e}")
         result.success = False
-        result.errors.append(str(e))
+        result.errors.append(f"[{error_type}] {str(e)}")
         result.completed_tasks = self.state.completed_tasks
         result.failed_tasks = self.state.failed_tasks
 
@@ -277,11 +456,33 @@ class Orchestrator(BaseOrchestrator):
         tasks: List[TaskExecution],
         plan: ExecutionPlan
     ) -> List[TaskExecution]:
-        """按依赖关系执行任务 (重构版 - 职责分离)"""
+        """按依赖关系执行任务 (重构版 - 职责分离)
+
+        v3.3 新增: 任务级生命周期钩子集成
+        """
         executed = []
         remaining = tasks.copy()
 
         while remaining:
+            # v3.3: 执行 PreTask 钩子检查
+            if self._hook_manager:
+                # 检查是否应该创建检查点
+                should_checkpoint = await self._session_manager.should_auto_checkpoint(
+                    len(executed)
+                ) if self._session_manager else False
+
+                if should_checkpoint:
+                    task_status = {t.step_id: t.status.value for t in remaining}
+                    memory_stats = (
+                        self.memory_manager.get_statistics()
+                        if self.memory_manager else {}
+                    )
+                    await self._session_manager.create_checkpoint(
+                        task_status=task_status,
+                        memory_summary=memory_stats,
+                        context_summary=f"已完成 {len(executed)} 个任务"
+                    )
+
             # 1. Token 预算检查
             if not await self._check_token_budget_for_remaining(remaining, executed):
                 break
@@ -298,12 +499,24 @@ class Orchestrator(BaseOrchestrator):
             # 3. 执行批次任务
             batch_results = await self._execute_task_batch(ready_tasks, plan)
 
-            # 4. 批次后处理 (同步, 记忆, 验证, Git提交)
+            # 4. 批次后处理 (同步, 记忆, 验证, Git提交, 钩子)
             await self._process_batch_results(batch_results, plan)
 
             executed.extend(batch_results)
             remaining = [t for t in remaining if t not in batch_results]
             self.result_handler.update_state(executed)
+
+            # v3.3: 执行 PostTask 钩子
+            if self._hook_manager:
+                for task in batch_results:
+                    step = plan.get_step_by_id(task.step_id)
+                    task_dict = {
+                        "task_id": task.step_id,
+                        "name": task.step_id,
+                        "status": task.status.value,
+                        "agent_type": step.agent_type.value if step else None
+                    }
+                    await self._hook_manager.execute_post_task(task_dict, task.status.value)
 
             # 5. 快速失败逻辑
             if self.config.enable_early_failure and any(

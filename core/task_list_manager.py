@@ -5,8 +5,13 @@
 
 管理任务的持久化状态,支持断点续传和进度可视化。
 借鉴自 autonomous-coding 的 feature_list.json 模式。
+
+v3.3 新增:
+- TaskPlanManager 集成: JSON → MD 单向同步
+- 自动更新 task_plan.md checkbox
 """
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field, asdict
@@ -207,17 +212,156 @@ class TaskListManager:
     """任务列表管理器
 
     负责任务列表的创建、加载、更新和查询。
+
+    v3.3 新增:
+        - TaskPlanManager 集成: JSON → MD 单向同步
+        - 自动同步到 task_plan.md
     """
 
-    def __init__(self, project_root: Path):
+    def __init__(
+        self,
+        project_root: Path,
+        enable_markdown_sync: bool = True
+    ):
         """初始化任务列表管理器
 
         Args:
             project_root: 项目根目录
+            enable_markdown_sync: 是否启用 Markdown 同步
         """
         self.project_root = Path(project_root)
-        self.tasks_json_path = self.project_root / "tasks.json"
+        self.tasks_json_path = self.project_root / ".superagent" / "tasks.json"
         self.task_list: Optional[TaskList] = None
+        self.enable_markdown_sync = enable_markdown_sync
+
+        # v3.3: TaskPlanManager 集成
+        self._task_plan_manager = None
+        if self.enable_markdown_sync:
+            self._init_task_plan_manager()
+
+    def _init_task_plan_manager(self):
+        """初始化 TaskPlanManager"""
+        try:
+            from extensions.planning_files import TaskPlanManager
+            self._task_plan_manager = TaskPlanManager(
+                self.project_root,
+                self.project_root / "task_plan.md",
+                auto_save=True
+            )
+            logger.info("TaskPlanManager 已初始化")
+        except ImportError as e:
+            logger.warning(f"无法导入 TaskPlanManager: {e}")
+            self._task_plan_manager = None
+
+    def _schedule_async_task(
+        self,
+        coro,
+        timeout: Optional[float] = None
+    ) -> Optional[asyncio.Task]:
+        """安全地调度异步任务 (v3.3 优化)
+
+        在同步方法中安全地调度异步任务。
+        如果有运行中的事件循环则使用它，否则创建新循环。
+
+        Args:
+            coro: 协程对象
+            timeout: 可选超时时间（秒）
+
+        Returns:
+            asyncio.Task 如果有运行中的事件循环，否则 None
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            task = loop.create_task(coro)
+            # v3.3 优化：添加超时处理
+            if timeout:
+                # 在后台任务中设置超时
+                async def with_timeout():
+                    try:
+                        await asyncio.wait_for(coro, timeout=timeout)
+                    except asyncio.TimeoutError:
+                        logger.warning(f"异步任务超时: {timeout}秒")
+                loop.create_task(with_timeout())
+            return task
+        except RuntimeError:
+            # 没有运行中的事件循环时，同步执行
+            if timeout:
+                try:
+                    asyncio.run(asyncio.wait_for(coro, timeout=timeout))
+                except asyncio.TimeoutError:
+                    logger.warning(f"异步任务超时: {timeout}秒")
+            else:
+                asyncio.run(coro)
+            return None
+
+    async def sync_to_markdown(self) -> bool:
+        """同步任务状态到 task_plan.md (JSON → MD 单向)
+
+        Returns:
+            是否同步成功
+        """
+        if not self._task_plan_manager or not self.task_list:
+            return False
+
+        try:
+            # 准备步骤数据
+            steps = []
+            for task in self.task_list.tasks:
+                steps.append({
+                    "step_id": task.id,
+                    "name": task.id,
+                    "description": task.description,
+                    "agent_type": task.assigned_agent,
+                    "status": task.status
+                })
+
+            # 准备依赖数据
+            dependencies = {}
+            for task in self.task_list.tasks:
+                if task.dependencies:
+                    dependencies[task.id] = task.dependencies
+
+            # 生成 requirements 格式
+            requirements = {
+                "user_input": self.task_list.project_name,
+                "analysis": {
+                    "complexity": "medium",
+                    "tech_stack": "Python"
+                }
+            }
+
+            # 创建/更新 task_plan.md
+            await self._task_plan_manager.create_plan(
+                requirements=requirements,
+                steps=steps,
+                dependencies=dependencies
+            )
+
+            logger.info("任务状态已同步到 task_plan.md")
+            return True
+
+        except Exception as e:
+            logger.error(f"同步到 Markdown 失败: {e}")
+            return False
+
+    async def update_task_status_in_md(self, task_id: str, status: str) -> bool:
+        """在 task_plan.md 中更新任务状态
+
+        Args:
+            task_id: 任务 ID
+            status: 新状态 (pending/running/completed/failed)
+
+        Returns:
+            是否更新成功
+        """
+        if not self._task_plan_manager:
+            return False
+
+        try:
+            return await self._task_plan_manager.update_task_status(task_id, status)
+        except Exception as e:
+            logger.error(f"更新 MD 状态失败: {e}")
+            return False
 
     def create_from_plan(
         self,
@@ -249,7 +393,7 @@ class TaskListManager:
             # 确保 AgentType 被转换为字符串 (Enum 兼容性)
             if hasattr(agent_type, 'value'):
                 agent_type = agent_type.value
-            
+
             tasks.append(TaskItem(
                 id=step.id,
                 description=step.description,
@@ -265,7 +409,30 @@ class TaskListManager:
         )
 
         self.save()
+
+        # v3.3: 同步到 task_plan.md (安全处理无事件循环的情况)
+        if self.enable_markdown_sync:
+            self._schedule_async_task(self.sync_to_markdown())
+
         logger.info(f"✅ 已创建任务列表: {len(tasks)} 个任务")
+        return self.task_list
+
+    async def create_from_plan_async(
+        self,
+        plan: Any,
+        project_name: Optional[str] = None
+    ) -> TaskList:
+        """从执行计划创建任务列表 (异步版本)
+
+        Args:
+            plan: ExecutionPlan 对象
+            project_name: 项目名称 (可选,默认从 plan 获取)
+
+        Returns:
+            TaskList 对象
+        """
+        self.create_from_plan(plan, project_name)
+        await self.sync_to_markdown()
         return self.task_list
 
     def load_or_create(self) -> Optional[TaskList]:
@@ -326,6 +493,85 @@ class TaskListManager:
         if self.task_list:
             self.task_list.mark_progress(task_id, status, error)
             self.save()
+
+            # v3.3: 同步到 task_plan.md (安全处理无事件循环的情况)
+            if self.enable_markdown_sync:
+                self._schedule_async_task(self.update_task_status_in_md(task_id, status))
+
+    def batch_update_tasks(
+        self,
+        updates: List[Dict[str, Any]],
+        defer_markdown_sync: bool = False
+    ) -> int:
+        """批量更新多个任务状态 (v3.3 优化)
+
+        Args:
+            updates: 更新列表，每个元素包含 task_id, status, 可选 error
+            defer_markdown_sync: 是否延迟 Markdown 同步（合并更新）
+
+        Returns:
+            成功更新的任务数
+        """
+        if not self.task_list:
+            self.load_or_create()
+
+        if not self.task_list:
+            return 0
+
+        updated_count = 0
+
+        for update in updates:
+            task_id = update.get("task_id")
+            status = update.get("status")
+            error = update.get("error")
+
+            if task_id and status:
+                self.task_list.mark_progress(task_id, status, error)
+                updated_count += 1
+
+        # 只保存一次
+        if updated_count > 0:
+            self.save()
+
+        # v3.3: 批量同步到 Markdown
+        if self.enable_markdown_sync and updated_count > 0 and not defer_markdown_sync:
+            # v3.3 安全增强：收集并过滤有效的 task_id
+            task_ids = [
+                u.get("task_id") for u in updates
+                if u.get("task_id") is not None
+            ]
+            if task_ids:
+                self._schedule_async_task(self.batch_update_markdown(task_ids))
+
+        return updated_count
+
+    async def batch_update_markdown(self, task_ids: List[str]) -> bool:
+        """批量更新 task_plan.md 中的多个任务状态 (v3.3 优化)
+
+        Args:
+            task_ids: 任务 ID 列表
+
+        Returns:
+            是否更新成功
+        """
+        if not self._task_plan_manager or not task_ids:
+            return False
+
+        try:
+            for task_id in task_ids:
+                # 从 task_list 获取状态
+                task = next(
+                    (t for t in self.task_list.tasks if t.id == task_id),
+                    None
+                )
+                if task:
+                    await self._task_plan_manager.update_task_status(
+                        task_id, task.status
+                    )
+            return True
+        except Exception as e:
+            logger.error(f"批量更新 Markdown 状态失败: {e}")
+            return False
 
     def print_progress(self):
         """打印当前进度"""

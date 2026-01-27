@@ -1,25 +1,32 @@
-#!/usr/bin/env python
 # -*- coding: utf-8 -*-
+"""Adapters - 适配器模块
+
+提供统一的接口访问执行、审查和测试功能。
+
+模块:
+    - UnifiedAdapter: 统一适配器 (执行+审查+测试)
+    - ExecutorAdapter: 执行适配器
+    - ReviewerAdapter: 审查适配器
+    - TestAdapter: 测试适配器
+
+方案A: 主工作流集成
+    - 代码审查已集成到 Orchestrator._finalize_execution
+    - 测试执行可选集成
+
+方案B: 独立API
+    - review_code(): 独立代码审查
+    - run_tests(): 独立测试执行
+    - execute_and_review_and_test(): 完整工作流
 """
-适配器层
 
-本模块提供适配器,连接新的抽象层(Executor/Reviewer)和现有的Agent系统。
-
-设计理念:
-- 不修改现有的Agent系统
-- 提供高级抽象接口
-- 保持向后兼容
-- 支持未来扩展
-"""
-
-from .executor_adapter import ExecutorAdapter
-from .reviewer_adapter import ReviewerAdapter
 from .unified_adapter import UnifiedAdapter
+from .reviewer_adapter import ReviewerAdapter
+from .executor_adapter import ExecutorAdapter
+from .test_adapter import TestAdapter
 
 __all__ = [
-    "ExecutorAdapter",
-    "ReviewerAdapter",
-    "UnifiedAdapter",
+    "UnifiedAdapter",      # 统一适配器
+    "ReviewerAdapter",     # 代码审查适配器
+    "ExecutorAdapter",     # 任务执行适配器
+    "TestAdapter",         # 测试执行适配器
 ]
-
-__version__ = "3.0.0"

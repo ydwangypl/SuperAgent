@@ -13,12 +13,17 @@ from pathlib import Path
 from datetime import datetime
 import uuid
 
-from core.reviewer import Reviewer, Artifact, ReviewResult, QualityMetric, ReviewStatus, ReviewExecutionError
+from core.reviewer import Reviewer, Artifact, ReviewResult, QualityMetric, ReviewStatus
 from review.reviewer import CodeReviewer
 from review.ralph_wiggum import RalphWiggumLoop
 from review.models import ReviewConfig
-from utils.exceptions import ReviewError
 
+
+# 默认超时配置（秒）
+DEFAULT_REVIEW_TIMEOUT = 600  # 10 minutes
+
+# 审查器名称
+DEFAULT_REVIEWER_NAME = "CodeReviewerAdapter"
 
 logger = logging.getLogger(__name__)
 
@@ -84,19 +89,30 @@ class CodeReviewerAdapter(Reviewer):
                 approved=False
             )
 
-        # 运行异步审查
+        # 运行异步审查 - 修复异步/同步反模式
         try:
-            loop = asyncio.get_event_loop()
+            # 获取或创建事件循环
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
             if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(
-                        asyncio.run,
-                        self._review_async(artifact)
-                    )
-                    result = future.result(timeout=600)  # 10分钟超时
+                # 已在事件循环中，使用 run_until_complete
+                result = loop.run_until_complete(self._review_async(artifact))
             else:
-                result = asyncio.run(self._review_async(artifact))
+                # 不在事件循环中，直接运行
+                result = loop.run_until_complete(self._review_async(artifact))
+
+        except asyncio.TimeoutError:
+            logger.error(f"Reviewer {self.name} timed out after {DEFAULT_REVIEW_TIMEOUT}s")
+            return ReviewResult(
+                status=ReviewStatus.REJECTED,
+                overall_score=0.0,
+                feedback=f"Review timed out after {DEFAULT_REVIEW_TIMEOUT}s",
+                approved=False
+            )
         except Exception as e:
             logger.error(f"Reviewer {self.name} failed: {e}", exc_info=True)
             return ReviewResult(
@@ -286,6 +302,39 @@ class ReviewerAdapter:
 
         return reviewer
 
+    def _create_artifact(
+        self,
+        artifact_type: str,
+        artifact_data: Dict[str, Any]
+    ) -> Artifact:
+        """创建 Artifact 对象 - 公共方法消除重复"""
+        return Artifact(
+            artifact_type=artifact_type,
+            content=artifact_data.get("content"),
+            metadata=artifact_data.get("metadata", {})
+        )
+
+    def _convert_result_to_dict(self, result: ReviewResult) -> Dict[str, Any]:
+        """转换审查结果为字典格式 - 公共方法消除重复"""
+        return {
+            "status": result.status.value,
+            "overall_score": result.overall_score,
+            "metrics": [
+                {
+                    "name": m.name,
+                    "score": m.score,
+                    "description": m.description,
+                    "issues": m.issues,
+                    "suggestions": m.suggestions
+                }
+                for m in result.metrics
+            ],
+            "feedback": result.feedback,
+            "approved": result.approved,
+            "metadata": result.metadata,
+            "review_time": result.review_time
+        }
+
     async def review(
         self,
         artifact_type: str,
@@ -311,34 +360,13 @@ class ReviewerAdapter:
         reviewer = self.get_reviewer(artifact_type, review_config)
 
         # 创建Artifact对象
-        artifact = Artifact(
-            artifact_type=artifact_type,
-            content=artifact_data.get("content"),
-            metadata=artifact_data.get("metadata", {})
-        )
+        artifact = self._create_artifact(artifact_type, artifact_data)
 
         # 执行审查
         result = await reviewer._review_async(artifact)
 
         # 转换为字典格式
-        return {
-            "status": result.status.value,
-            "overall_score": result.overall_score,
-            "metrics": [
-                {
-                    "name": m.name,
-                    "score": m.score,
-                    "description": m.description,
-                    "issues": m.issues,
-                    "suggestions": m.suggestions
-                }
-                for m in result.metrics
-            ],
-            "feedback": result.feedback,
-            "approved": result.approved,
-            "metadata": result.metadata,
-            "review_time": result.review_time
-        }
+        return self._convert_result_to_dict(result)
 
     def review_sync(
         self,
@@ -365,31 +393,10 @@ class ReviewerAdapter:
         reviewer = self.get_reviewer(artifact_type, review_config)
 
         # 创建Artifact对象
-        artifact = Artifact(
-            artifact_type=artifact_type,
-            content=artifact_data.get("content"),
-            metadata=artifact_data.get("metadata", {})
-        )
+        artifact = self._create_artifact(artifact_type, artifact_data)
 
         # 执行审查
         result = reviewer.review(artifact)
 
         # 转换为字典格式
-        return {
-            "status": result.status.value,
-            "overall_score": result.overall_score,
-            "metrics": [
-                {
-                    "name": m.name,
-                    "score": m.score,
-                    "description": m.description,
-                    "issues": m.issues,
-                    "suggestions": m.suggestions
-                }
-                for m in result.metrics
-            ],
-            "feedback": result.feedback,
-            "approved": result.approved,
-            "metadata": result.metadata,
-            "review_time": result.review_time
-        }
+        return self._convert_result_to_dict(result)
